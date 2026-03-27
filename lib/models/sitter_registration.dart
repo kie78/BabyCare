@@ -10,6 +10,7 @@ class SitterRegistrationData {
 
   // Step 2: Work Preferences
   List<String>? availableDays;
+  String? rateType;
   String? hourlyRate;
   String? currency;
   List<String>? languages;

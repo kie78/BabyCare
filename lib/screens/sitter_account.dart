@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../models/babysitter_profile.dart';
+import '../providers/auth_provider.dart';
+import '../services/api_client.dart';
+import '../services/babysitter_service.dart';
+import '../services/secure_storage_service.dart';
+import 'gateway_screen.dart';
 import 'sitter_dashboard.dart';
 import 'sitter_messages.dart';
-import 'sitter_login.dart';
 
 class SitterAccountScreen extends StatefulWidget {
   const SitterAccountScreen({super.key});
@@ -15,6 +22,12 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   late TextEditingController _ratesController;
   late TextEditingController _locationController;
   late TextEditingController _paymentController;
+  final SecureStorageService _storage = SecureStorageService();
+  late final BabysitterService _babysitterService;
+
+  BabysitterProfile? _profile;
+  bool _isLoadingProfile = true;
+  String? _profileError;
 
   final List<String> _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   late List<bool> _selectedDays;
@@ -22,10 +35,17 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   @override
   void initState() {
     super.initState();
-    _ratesController = TextEditingController(text: '15,000 UGX/hour');
-    _locationController = TextEditingController(text: 'Kampala, Uganda');
-    _paymentController = TextEditingController(text: 'Mobile Money (MTN)');
-    _selectedDays = [true, true, true, true, true, false, false];
+    _ratesController = TextEditingController();
+    _locationController = TextEditingController();
+    _paymentController = TextEditingController();
+    _selectedDays = List<bool>.filled(_days.length, false);
+
+    final apiClient = ApiClient(
+      baseUrl: 'https://babycare-api-0prm.onrender.com',
+      tokenProvider: _storage.readToken,
+    );
+    _babysitterService = BabysitterService(apiClient: apiClient);
+    _loadProfile();
   }
 
   @override
@@ -37,11 +57,182 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   }
 
   void _onSavePressed() {
+    if (_profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Load profile details before saving.')),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Profile updated successfully!'),
         duration: Duration(seconds: 2),
       ),
+    );
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() {
+      _isLoadingProfile = true;
+      _profileError = null;
+    });
+
+    try {
+      final profile = await _babysitterService.getMyProfile();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _profile = profile;
+        _ratesController.text = _formatRate(profile);
+        _locationController.text = _displayOrFallback(
+          profile.location,
+          fallback: 'Location not set',
+        );
+        _paymentController.text = _displayOrFallback(
+          profile.paymentMethod,
+          fallback: 'Payment method not set',
+        );
+        _selectedDays = _mapAvailabilityDays(profile.availability);
+        _isLoadingProfile = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        await context.read<AuthProvider>().handleUnauthorized();
+        if (!mounted) {
+          return;
+        }
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const GatewayScreen()),
+          (route) => false,
+        );
+        return;
+      }
+
+      setState(() {
+        _profileError = error.message;
+        _isLoadingProfile = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _profileError = 'Unable to load your profile right now.';
+        _isLoadingProfile = false;
+      });
+    }
+  }
+
+  String _displayOrFallback(String? value, {required String fallback}) {
+    final trimmed = (value ?? '').trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  String _formatRate(BabysitterProfile profile) {
+    final amount = profile.rateAmount;
+    final currency = _displayOrFallback(profile.currency, fallback: 'UGX');
+    final rateType = _displayOrFallback(profile.rateType, fallback: 'hourly');
+
+    if (amount == null) {
+      return 'Rate not set';
+    }
+
+    final amountText = amount % 1 == 0
+        ? amount.toInt().toString()
+        : amount.toStringAsFixed(2);
+    return '$amountText $currency/$rateType';
+  }
+
+  List<bool> _mapAvailabilityDays(List<String> availability) {
+    if (availability.isEmpty) {
+      return List<bool>.filled(_days.length, false);
+    }
+
+    final normalized = availability.map((day) => day.toLowerCase()).toSet();
+    return _days.map((day) {
+      final short = day.toLowerCase();
+      final long = _dayLongName(day).toLowerCase();
+      return normalized.contains(short) || normalized.contains(long);
+    }).toList();
+  }
+
+  String _dayLongName(String shortDay) {
+    switch (shortDay) {
+      case 'Mon':
+        return 'Monday';
+      case 'Tue':
+        return 'Tuesday';
+      case 'Wed':
+        return 'Wednesday';
+      case 'Thu':
+        return 'Thursday';
+      case 'Fri':
+        return 'Friday';
+      case 'Sat':
+        return 'Saturday';
+      case 'Sun':
+        return 'Sunday';
+      default:
+        return shortDay;
+    }
+  }
+
+  Widget _buildBodyContent() {
+    if (_isLoadingProfile) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 56),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_profileError != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 32),
+        child: Column(
+          children: [
+            Text(
+              _profileError!,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                color: BabyCareTheme.darkGrey,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadProfile,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: BabyCareTheme.primaryBerry,
+              ),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        _buildAvatarSection(),
+        const SizedBox(height: 32),
+        _buildWorkPreferencesSection(),
+        const SizedBox(height: 24),
+        _buildCardSection(
+          title: 'Preferred Payment Method',
+          controller: _paymentController,
+          icon: Icons.edit_outlined,
+        ),
+        const SizedBox(height: 32),
+        _buildSaveButton(),
+        const SizedBox(height: 16),
+        _buildLogoutButton(),
+        const SizedBox(height: 100),
+      ],
     );
   }
 
@@ -65,33 +256,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                       horizontal: 24,
                       vertical: 24,
                     ),
-                    child: Column(
-                      children: [
-                        // Avatar Section
-                        _buildAvatarSection(),
-                        const SizedBox(height: 32),
-
-                        // Work Preferences Section
-                        _buildWorkPreferencesSection(),
-                        const SizedBox(height: 24),
-
-                        // Payment Method Card
-                        _buildCardSection(
-                          title: 'Preferred Payment Method',
-                          controller: _paymentController,
-                          icon: Icons.edit_outlined,
-                        ),
-                        const SizedBox(height: 32),
-
-                        // Save Button
-                        _buildSaveButton(),
-                        const SizedBox(height: 16),
-
-                        // Logout Button
-                        _buildLogoutButton(),
-                        const SizedBox(height: 100), // Space for bottom nav
-                      ],
-                    ),
+                    child: _buildBodyContent(),
                   ),
                 ),
               ],
@@ -197,7 +362,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
         ),
         const SizedBox(height: 16),
         Text(
-          'Maria Elena',
+          _displayOrFallback(_profile?.fullName, fallback: 'Babysitter'),
           style: Theme.of(context).textTheme.titleLarge!.copyWith(
             color: BabyCareTheme.primaryBerry,
             fontWeight: FontWeight.bold,
@@ -205,7 +370,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Professional Babysitter',
+          _displayOrFallback(_profile?.email, fallback: 'Professional Babysitter'),
           style: Theme.of(context).textTheme.bodySmall!.copyWith(
             color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
           ),
@@ -542,10 +707,14 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 ),
               ),
               TextButton(
-                onPressed: () {
+                onPressed: () async {
+                  await context.read<AuthProvider>().logout();
+                  if (!context.mounted) {
+                    return;
+                  }
                   Navigator.of(context).pushAndRemoveUntil(
                     MaterialPageRoute(
-                      builder: (context) => const SitterLoginScreen(),
+                      builder: (context) => const GatewayScreen(),
                     ),
                     (route) => false,
                   );

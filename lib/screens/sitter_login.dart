@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../models/auth_user.dart';
+import '../providers/auth_provider.dart';
 import '../models/sitter_registration.dart';
 import 'sitter_dashboard.dart';
 import 'sitter_registration_step1.dart';
@@ -31,7 +35,7 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
     super.dispose();
   }
 
-  void _onLoginPressed() {
+  Future<void> _onLoginPressed() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -39,11 +43,53 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
       return;
     }
 
-    // TODO: Authenticate with backend
-    // For now, simulate login and navigate to pending confirmation
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const SitterPendingConfirmationScreen(),
+    final authProvider = context.read<AuthProvider>();
+    final success = await authProvider.login(
+      email: _emailController.text.trim(),
+      password: _passwordController.text,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (success) {
+      if (authProvider.currentRole == UserRole.babysitter) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) => const SitterDashboardScreen(),
+          ),
+          (route) => false,
+        );
+        return;
+      }
+
+      await authProvider.logout();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This account does not have babysitter access.'),
+        ),
+      );
+      return;
+    }
+
+    if (authProvider.lastStatusCode == 403) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const SitterPendingConfirmationScreen(),
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          authProvider.errorMessage ?? 'Login failed. Please try again.',
+        ),
       ),
     );
   }
@@ -334,6 +380,8 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
 
   /// Login button
   Widget _buildLoginButton() {
+    final isLoading = context.watch<AuthProvider>().isLoading;
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -341,19 +389,30 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
         borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
       ),
       child: ElevatedButton(
-        onPressed: _onLoginPressed,
+        onPressed: isLoading ? null : _onLoginPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
-        child: Text(
-          'Login',
-          style: Theme.of(context).textTheme.titleMedium!.copyWith(
-            color: BabyCareTheme.universalWhite,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    BabyCareTheme.universalWhite,
+                  ),
+                ),
+              )
+            : Text(
+                'Login',
+                style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                  color: BabyCareTheme.universalWhite,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
       ),
     );
   }
@@ -399,7 +458,11 @@ class SitterPendingConfirmationScreen extends StatefulWidget {
 
 class _SitterPendingConfirmationScreenState
     extends State<SitterPendingConfirmationScreen> {
-  void _onLogOutPressed() {
+  Future<void> _onLogOutPressed() async {
+    await context.read<AuthProvider>().logout();
+    if (!mounted) {
+      return;
+    }
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const GatewayScreen()),
       (route) => false,
@@ -499,33 +562,6 @@ class _SitterPendingConfirmationScreenState
               ),
 
               const SizedBox(height: 40),
-
-              // Arrow to Dashboard
-              GestureDetector(
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const SitterDashboardScreen(),
-                    ),
-                  );
-                },
-                child: Align(
-                  alignment: Alignment.bottomRight,
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      gradient: BabyCareTheme.primaryGradient,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.arrow_forward,
-                      color: BabyCareTheme.universalWhite,
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ),
 
               const SizedBox(height: 40),
             ],

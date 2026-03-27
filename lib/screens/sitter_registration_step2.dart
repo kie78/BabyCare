@@ -52,7 +52,16 @@ class _SitterRegistrationStep2ScreenState
             .toSet();
     _selectedLanguages = (widget.registrationData.languages ?? ['English'])
         .toSet();
-    _selectedRateType = 'Hourly';
+    _selectedRateType =
+      (widget.registrationData.rateType ?? 'hourly').toLowerCase() == 'daily'
+      ? 'Daily'
+      : (widget.registrationData.rateType ?? 'hourly').toLowerCase() ==
+          'weekly'
+      ? 'Weekly'
+      : (widget.registrationData.rateType ?? 'hourly').toLowerCase() ==
+          'monthly'
+      ? 'Monthly'
+      : 'Hourly';
     _selectedPaymentMethod =
         widget.registrationData.paymentMethod ?? 'Mobile Money';
   }
@@ -97,6 +106,7 @@ class _SitterRegistrationStep2ScreenState
   void _onNextPressed() {
     // Save data
     widget.registrationData.availableDays = _selectedDays.toList();
+    widget.registrationData.rateType = _selectedRateType.toLowerCase();
     widget.registrationData.hourlyRate = _rateController.text;
     widget.registrationData.currency = _currencyCode;
     widget.registrationData.languages = _selectedLanguages.toList();
