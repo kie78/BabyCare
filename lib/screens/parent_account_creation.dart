@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
-import 'parent_discover.dart';
+import '../providers/auth_provider.dart';
+import 'parent_login.dart';
 
 class ParentAccountCreationScreen extends StatefulWidget {
   const ParentAccountCreationScreen({super.key});
@@ -45,7 +48,7 @@ class _ParentAccountCreationScreenState
     super.dispose();
   }
 
-  void _onCreateAccountPressed() {
+  Future<void> _onCreateAccountPressed() async {
     // Validation
     if (_fullNameController.text.isEmpty ||
         _occupationController.text.isEmpty ||
@@ -60,10 +63,40 @@ class _ParentAccountCreationScreenState
       return;
     }
 
-    // TODO: Submit to backend
-    // For now, navigate to parent discover
+    final authProvider = context.read<AuthProvider>();
+    final success = await authProvider.registerParent(
+      fullName: _fullNameController.text.trim(),
+      email: _emailController.text.trim(),
+      phone: _phoneController.text.trim(),
+      location: _locationController.text.trim(),
+      occupation: _occupationController.text.trim(),
+      preferredHours: _preferredHoursController.text.trim(),
+      password: _passwordController.text,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            authProvider.errorMessage ??
+                'We could not create your account right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Account created successfully. Please log in.'),
+      ),
+    );
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const ParentDiscoverScreen()),
+      MaterialPageRoute(builder: (context) => const ParentLoginScreen()),
     );
   }
 
@@ -290,6 +323,8 @@ class _ParentAccountCreationScreenState
 
   /// Create Account Button
   Widget _buildCreateAccountButton() {
+    final isLoading = context.watch<AuthProvider>().isLoading;
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -297,19 +332,30 @@ class _ParentAccountCreationScreenState
         borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
       ),
       child: ElevatedButton(
-        onPressed: _onCreateAccountPressed,
+        onPressed: isLoading ? null : _onCreateAccountPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
-        child: Text(
-          'Create Account',
-          style: Theme.of(context).textTheme.titleMedium!.copyWith(
-            color: BabyCareTheme.universalWhite,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    BabyCareTheme.universalWhite,
+                  ),
+                ),
+              )
+            : Text(
+                'Create Account',
+                style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                  color: BabyCareTheme.universalWhite,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
       ),
     );
   }

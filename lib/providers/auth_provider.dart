@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/auth_session.dart';
 import '../models/auth_user.dart';
+import '../models/sitter_registration.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 
@@ -59,6 +60,70 @@ class AuthProvider extends ChangeNotifier {
     } catch (_) {
       _lastStatusCode = null;
       _errorMessage = 'Login failed. Please try again.';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> registerParent({
+    required String fullName,
+    required String email,
+    required String phone,
+    required String location,
+    required String occupation,
+    required String preferredHours,
+    required String password,
+  }) async {
+    _isLoading = true;
+    _errorMessage = null;
+    _lastStatusCode = null;
+    notifyListeners();
+
+    try {
+      await _authService.registerParent(
+        fullName: fullName,
+        email: email,
+        phone: phone,
+        location: location,
+        occupation: occupation,
+        preferredHours: preferredHours,
+        password: password,
+      );
+      return true;
+    } on ApiException catch (error) {
+      _lastStatusCode = error.statusCode;
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _lastStatusCode = null;
+      _errorMessage = 'Registration failed. Please try again.';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> registerBabysitter({
+    required SitterRegistrationData data,
+  }) async {
+    _isLoading = true;
+    _errorMessage = null;
+    _lastStatusCode = null;
+    notifyListeners();
+
+    try {
+      await _authService.registerBabysitter(data: data);
+      return true;
+    } on ApiException catch (error) {
+      _lastStatusCode = error.statusCode;
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _lastStatusCode = null;
+      _errorMessage = 'Registration failed. Please try again.';
       return false;
     } finally {
       _isLoading = false;

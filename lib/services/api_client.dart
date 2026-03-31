@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -56,14 +58,66 @@ class ApiClient {
     return Uri.parse('$baseUrl$normalizedPath');
   }
 
+  Future<dynamic> _performRequest(
+    Future<http.Response> Function() request,
+  ) async {
+    try {
+      final response = await request().timeout(_timeout);
+      return _decodeResponse(response);
+    } on TimeoutException {
+      throw ApiException(
+        statusCode: 408,
+        message:
+            'The request timed out. Please check your connection and try again.',
+      );
+    } on SocketException {
+      throw ApiException(
+        statusCode: 503,
+        message:
+            'Unable to reach the server. Please check your internet connection and try again.',
+      );
+    } on http.ClientException {
+      throw ApiException(
+        statusCode: 503,
+        message: 'A network error occurred while contacting the server.',
+      );
+    }
+  }
+
+  Future<dynamic> _performMultipartRequest(
+    Future<http.StreamedResponse> Function() request,
+  ) async {
+    try {
+      final streamedResponse = await request().timeout(_timeout);
+      final response = await http.Response.fromStream(streamedResponse);
+      return _decodeResponse(response);
+    } on TimeoutException {
+      throw ApiException(
+        statusCode: 408,
+        message:
+            'The upload took too long. Please try again with a stable connection.',
+      );
+    } on SocketException {
+      throw ApiException(
+        statusCode: 503,
+        message:
+            'Unable to reach the server. Please check your internet connection and try again.',
+      );
+    } on http.ClientException {
+      throw ApiException(
+        statusCode: 503,
+        message: 'A network error occurred while sending the request.',
+      );
+    }
+  }
+
   Future<dynamic> get(String path, {bool requiresAuth = true}) async {
-    final response = await _client
-        .get(
-          _buildUri(path),
-          headers: await _buildHeaders(requiresAuth: requiresAuth),
-        )
-        .timeout(_timeout);
-    return _decodeResponse(response);
+    return _performRequest(
+      () async => _client.get(
+        _buildUri(path),
+        headers: await _buildHeaders(requiresAuth: requiresAuth),
+      ),
+    );
   }
 
   Future<dynamic> post(
@@ -71,14 +125,13 @@ class ApiClient {
     bool requiresAuth = true,
     Map<String, dynamic>? body,
   }) async {
-    final response = await _client
-        .post(
-          _buildUri(path),
-          headers: await _buildHeaders(requiresAuth: requiresAuth),
-          body: jsonEncode(body ?? <String, dynamic>{}),
-        )
-        .timeout(_timeout);
-    return _decodeResponse(response);
+    return _performRequest(
+      () async => _client.post(
+        _buildUri(path),
+        headers: await _buildHeaders(requiresAuth: requiresAuth),
+        body: jsonEncode(body ?? <String, dynamic>{}),
+      ),
+    );
   }
 
   Future<dynamic> put(
@@ -86,24 +139,22 @@ class ApiClient {
     bool requiresAuth = true,
     Map<String, dynamic>? body,
   }) async {
-    final response = await _client
-        .put(
-          _buildUri(path),
-          headers: await _buildHeaders(requiresAuth: requiresAuth),
-          body: jsonEncode(body ?? <String, dynamic>{}),
-        )
-        .timeout(_timeout);
-    return _decodeResponse(response);
+    return _performRequest(
+      () async => _client.put(
+        _buildUri(path),
+        headers: await _buildHeaders(requiresAuth: requiresAuth),
+        body: jsonEncode(body ?? <String, dynamic>{}),
+      ),
+    );
   }
 
   Future<dynamic> delete(String path, {bool requiresAuth = true}) async {
-    final response = await _client
-        .delete(
-          _buildUri(path),
-          headers: await _buildHeaders(requiresAuth: requiresAuth),
-        )
-        .timeout(_timeout);
-    return _decodeResponse(response);
+    return _performRequest(
+      () async => _client.delete(
+        _buildUri(path),
+        headers: await _buildHeaders(requiresAuth: requiresAuth),
+      ),
+    );
   }
 
   Future<dynamic> postMultipart(
@@ -129,9 +180,7 @@ class ApiClient {
       request.files.add(await http.MultipartFile.fromPath(entry.key, filePath));
     }
 
-    final streamedResponse = await _client.send(request).timeout(_timeout);
-    final response = await http.Response.fromStream(streamedResponse);
-    return _decodeResponse(response);
+    return _performMultipartRequest(() => _client.send(request));
   }
 
   Future<dynamic> putMultipart(
@@ -157,9 +206,7 @@ class ApiClient {
       request.files.add(await http.MultipartFile.fromPath(entry.key, filePath));
     }
 
-    final streamedResponse = await _client.send(request).timeout(_timeout);
-    final response = await http.Response.fromStream(streamedResponse);
-    return _decodeResponse(response);
+    return _performMultipartRequest(() => _client.send(request));
   }
 
   dynamic _decodeResponse(http.Response response) {

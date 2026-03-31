@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
-import 'sitter_messages.dart';
-import 'sitter_account.dart';
+import '../models/profile_view.dart';
+import '../providers/auth_provider.dart';
+import '../providers/babysitter_dashboard_provider.dart';
+import 'gateway_screen.dart';
 import 'parent_profile_sitter_view.dart';
+import 'sitter_account.dart';
+import 'sitter_messages.dart';
 
 class SitterDashboardScreen extends StatefulWidget {
   const SitterDashboardScreen({super.key});
@@ -12,43 +18,67 @@ class SitterDashboardScreen extends StatefulWidget {
 }
 
 class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
-  bool _isAvailable = true;
-  final int _weeklyReach = 127;
-
-  final List<_Visitor> visitors = [
-    _Visitor(
-      name: 'Sarah M.',
-      profileImage: 'assets/logo.png',
-      message: 'Interested in your profile',
-      timestamp: '2 hours ago',
-      occupation: 'Nurse',
-    ),
-    _Visitor(
-      name: 'James K.',
-      profileImage: 'assets/logo.png',
-      message: 'Would like to book you',
-      timestamp: '4 hours ago',
-      occupation: 'Engineer',
-    ),
-    _Visitor(
-      name: 'Emma L.',
-      profileImage: 'assets/logo.png',
-      message: 'Viewed your availability',
-      timestamp: '1 day ago',
-      occupation: 'Teacher',
-    ),
-  ];
-
-  void _onAvailabilityToggle(bool value) {
-    setState(() {
-      _isAvailable = value;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDashboard();
     });
+  }
+
+  Future<void> _loadDashboard() async {
+    final dashboardProvider = context.read<BabysitterDashboardProvider>();
+    await dashboardProvider.loadDashboard();
+    if (!mounted) {
+      return;
+    }
+    await _handleUnauthorized(dashboardProvider.lastStatusCode);
+  }
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _onAvailabilityToggle(bool value) async {
+    final dashboardProvider = context.read<BabysitterDashboardProvider>();
+    final success = await dashboardProvider.updateAvailability(value);
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      await _handleUnauthorized(dashboardProvider.lastStatusCode);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            dashboardProvider.errorMessage ??
+                'Unable to update your work status right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'You are now ${_isAvailable ? 'available' : 'unavailable'}',
+          dashboardProvider.successMessage ?? 'Work status updated.',
         ),
-        duration: const Duration(seconds: 1),
       ),
     );
   }
@@ -59,14 +89,17 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
     );
   }
 
-  void _onVisitorPressed(int index) {
+  void _onVisitorPressed(ProfileView visitor) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => ParentProfileSitterViewScreen(
-          parentName: visitors[index].name,
-          location: 'Kampala',
-          job: visitors[index].occupation,
-          hours: '4PM–9PM',
+          parentId: visitor.id,
+          parentName: visitor.viewerName,
+          profileImage: (visitor.profileImageUrl ?? '').trim(),
+          location: (visitor.location ?? 'Location not provided').trim(),
+          job: (visitor.occupation ?? 'Parent').trim(),
+          hours: (visitor.preferredHours ?? 'Hours not provided').trim(),
+          phoneNumber: (visitor.phone ?? '').trim(),
         ),
       ),
     );
@@ -74,70 +107,108 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      extendBody: true,
-      body: Stack(
-        children: [
-          SafeArea(
-            child: Column(
-              children: [
-                // Fixed Header
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
-                  ),
-                  child: _buildHeader(),
-                ),
-                // Scrollable Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 16),
-
-                        // Availability toggle card
-                        _buildAvailabilityCard(),
-
-                        const SizedBox(height: 24),
-
-                        // Weekly reach metric
-                        _buildWeeklyReachCard(),
-
-                        const SizedBox(height: 32),
-
-                        // Visitors section
-                        _buildVisitorsSection(),
-
-                        const SizedBox(height: 100),
-                      ],
+    return Consumer<BabysitterDashboardProvider>(
+      builder: (context, dashboardProvider, _) {
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          extendBody: true,
+          body: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      child: _buildHeader(dashboardProvider.profile),
                     ),
-                  ),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadDashboard,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: _buildDashboardBody(dashboardProvider),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                left: 21,
+                right: 21,
+                bottom: 16,
+                child: _buildBottomNavigation(),
+              ),
+            ],
           ),
-          Positioned(
-            left: 21,
-            right: 21,
-            bottom: 16,
-            child: _buildBottomNavigation(),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  /// Header with greeting and avatar
-  Widget _buildHeader() {
+  Widget _buildDashboardBody(BabysitterDashboardProvider dashboardProvider) {
+    if (dashboardProvider.isLoading && dashboardProvider.profile == null) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 160),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (dashboardProvider.errorMessage != null &&
+        dashboardProvider.profile == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 160),
+        child: Center(
+          child: Column(
+            children: [
+              Text(
+                dashboardProvider.errorMessage!,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadDashboard,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: BabyCareTheme.primaryBerry,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        _buildAvailabilityCard(dashboardProvider),
+        const SizedBox(height: 24),
+        _buildWeeklyReachCard(dashboardProvider.weeklyViews),
+        const SizedBox(height: 32),
+        _buildVisitorsSection(dashboardProvider.profileViews),
+        const SizedBox(height: 100),
+      ],
+    );
+  }
+
+  Widget _buildHeader(dynamic profile) {
+    final name = profile?.fullName?.toString() ?? 'Babysitter';
+    final profileImageUrl = profile?.profilePictureUrl?.toString();
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
-          'Hello, Maria',
+          'Hello, ${name.split(' ').first}',
           style: Theme.of(context).textTheme.headlineLarge!.copyWith(
             color: BabyCareTheme.primaryBerry,
             fontWeight: FontWeight.bold,
@@ -160,7 +231,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
           child: Padding(
             padding: const EdgeInsets.all(4),
             child: ClipOval(
-              child: Image.asset('assets/logo.png', fit: BoxFit.cover),
+              child: _buildProfileImage(profileImageUrl),
             ),
           ),
         ),
@@ -168,15 +239,32 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
     );
   }
 
-  /// Availability toggle card
-  Widget _buildAvailabilityCard() {
+  Widget _buildProfileImage(String? imageUrl) {
+    final normalizedUrl = (imageUrl ?? '').trim();
+
+    if (normalizedUrl.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
+    );
+  }
+
+  Widget _buildAvailabilityCard(BabysitterDashboardProvider dashboardProvider) {
+    final isAvailable = dashboardProvider.isAvailable;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: _isAvailable ? BabyCareTheme.lightPink : BabyCareTheme.lightGrey,
+        color: isAvailable ? BabyCareTheme.lightPink : BabyCareTheme.lightGrey,
         borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
         border: Border.all(
-          color: _isAvailable
+          color: isAvailable
               ? BabyCareTheme.primaryBerry.withValues(alpha: 0.2)
               : BabyCareTheme.lightGrey,
         ),
@@ -196,9 +284,9 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                _isAvailable ? 'You are available' : 'You are unavailable',
+                isAvailable ? 'You are available' : 'You are unavailable',
                 style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                  color: _isAvailable
+                  color: isAvailable
                       ? BabyCareTheme.primaryBerry
                       : BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                   fontWeight: FontWeight.w600,
@@ -207,8 +295,10 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
             ],
           ),
           Switch(
-            value: _isAvailable,
-            onChanged: _onAvailabilityToggle,
+            value: isAvailable,
+            onChanged: dashboardProvider.isUpdatingAvailability
+                ? null
+                : _onAvailabilityToggle,
             activeColor: BabyCareTheme.primaryBerry,
             activeTrackColor: BabyCareTheme.primaryBerry.withValues(alpha: 0.3),
             inactiveThumbColor: BabyCareTheme.darkGrey.withValues(alpha: 0.3),
@@ -219,8 +309,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
     );
   }
 
-  /// Weekly reach metric card
-  Widget _buildWeeklyReachCard() {
+  Widget _buildWeeklyReachCard(int weeklyReach) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -257,7 +346,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '$_weeklyReach parents viewed your profile',
+                  '$weeklyReach profile views this week',
                   style: Theme.of(context).textTheme.titleSmall!.copyWith(
                     color: BabyCareTheme.primaryBerry,
                     fontWeight: FontWeight.bold,
@@ -271,8 +360,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
     );
   }
 
-  /// Visitors section
-  Widget _buildVisitorsSection() {
+  Widget _buildVisitorsSection(List<ProfileView> visitors) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -284,25 +372,32 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: visitors.length,
-          separatorBuilder: (context, index) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final visitor = visitors[index];
-            return GestureDetector(
-              onTap: () => _onVisitorPressed(index),
-              child: _buildVisitorCard(visitor),
-            );
-          },
-        ),
+        if (visitors.isEmpty)
+          Text(
+            'No profile views have been recorded yet.',
+            style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+              color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+            ),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: visitors.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final visitor = visitors[index];
+              return GestureDetector(
+                onTap: () => _onVisitorPressed(visitor),
+                child: _buildVisitorCard(visitor),
+              );
+            },
+          ),
       ],
     );
   }
 
-  /// Individual visitor card
-  Widget _buildVisitorCard(_Visitor visitor) {
+  Widget _buildVisitorCard(ProfileView visitor) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -321,7 +416,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
               gradient: BabyCareTheme.primaryGradient,
             ),
             child: ClipOval(
-              child: Image.asset(visitor.profileImage, fit: BoxFit.cover),
+              child: _buildProfileImage(visitor.profileImageUrl),
             ),
           ),
           const SizedBox(width: 12),
@@ -332,7 +427,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  visitor.name,
+                  visitor.viewerName,
                   style: Theme.of(context).textTheme.titleSmall!.copyWith(
                     color: BabyCareTheme.darkGrey,
                     fontWeight: FontWeight.bold,
@@ -340,7 +435,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  visitor.occupation,
+                  (visitor.occupation ?? 'Parent').trim(),
                   style: Theme.of(context).textTheme.bodySmall!.copyWith(
                     color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
                   ),
@@ -351,7 +446,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
 
           // Timestamp
           Text(
-            visitor.timestamp,
+            _formatDateTime(visitor.viewedAt),
             style: Theme.of(context).textTheme.bodySmall!.copyWith(
               color: BabyCareTheme.darkGrey.withValues(alpha: 0.5),
               fontSize: 11,
@@ -362,7 +457,24 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
     );
   }
 
-  /// Bottom navigation bar
+  String _formatDateTime(DateTime? value) {
+    if (value == null) {
+      return 'Now';
+    }
+
+    final difference = DateTime.now().difference(value);
+    if (difference.inMinutes < 1) {
+      return 'Now';
+    }
+    if (difference.inHours < 1) {
+      return '${difference.inMinutes}m ago';
+    }
+    if (difference.inDays < 1) {
+      return '${difference.inHours}h ago';
+    }
+    return '${difference.inDays}d ago';
+  }
+
   Widget _buildBottomNavigation() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
@@ -418,7 +530,6 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
     );
   }
 
-  /// Navigation item
   Widget _buildNavItem({
     required IconData icon,
     required String label,
@@ -453,21 +564,4 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
       ),
     );
   }
-}
-
-/// Visitor data model
-class _Visitor {
-  final String name;
-  final String profileImage;
-  final String message;
-  final String timestamp;
-  final String occupation;
-
-  _Visitor({
-    required this.name,
-    required this.profileImage,
-    required this.message,
-    required this.timestamp,
-    required this.occupation,
-  });
 }

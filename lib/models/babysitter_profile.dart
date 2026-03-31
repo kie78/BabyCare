@@ -48,11 +48,25 @@ class BabysitterProfile {
       return <String>[];
     }
 
+    String parseStatus(Map<String, dynamic> payload) {
+      final explicitStatus = payload['status']?.toString();
+      if (explicitStatus != null && explicitStatus.trim().isNotEmpty) {
+        return explicitStatus;
+      }
+
+      final isApproved = payload['is_approved'];
+      if (isApproved is bool) {
+        return isApproved ? 'active' : 'pending';
+      }
+
+      return 'unknown';
+    }
+
     return BabysitterProfile(
-      id: (json['id'] ?? '').toString(),
+      id: (json['id'] ?? json['user_id'] ?? '').toString(),
       fullName: (json['full_name'] ?? '').toString(),
       email: (json['email'] ?? '').toString(),
-      status: (json['status'] ?? 'unknown').toString(),
+      status: parseStatus(json),
       phone: json['phone']?.toString(),
       location: json['location']?.toString(),
       gender: json['gender']?.toString(),
@@ -63,7 +77,8 @@ class BabysitterProfile {
       currency: json['currency']?.toString(),
       paymentMethod: json['payment_method']?.toString(),
       isAvailable: json['is_available'] as bool?,
-      profilePictureUrl: json['profile_picture']?.toString(),
+      profilePictureUrl:
+          (json['profile_picture'] ?? json['profile_picture_url'])?.toString(),
     );
   }
 }

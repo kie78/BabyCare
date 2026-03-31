@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../models/babysitter_profile.dart';
+import '../providers/auth_provider.dart';
+import '../providers/conversations_provider.dart';
+import '../providers/parent_provider.dart';
+import 'gateway_screen.dart';
+import 'parent_messages.dart';
 
 class SitterProfileParentViewScreen extends StatefulWidget {
-  final String sitterName;
-  final String gender;
-  final String location;
-  final String rate;
+  const SitterProfileParentViewScreen({super.key, required this.babysitterId});
 
-  const SitterProfileParentViewScreen({
-    super.key,
-    required this.sitterName,
-    required this.gender,
-    required this.location,
-    required this.rate,
-  });
+  final String babysitterId;
 
   @override
   State<SitterProfileParentViewScreen> createState() =>
@@ -22,95 +21,262 @@ class SitterProfileParentViewScreen extends StatefulWidget {
 
 class _SitterProfileParentViewScreenState
     extends State<SitterProfileParentViewScreen> {
-  bool _isSaved = false;
-  final List<String> _availableDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-  final List<String> _languages = ['English', 'Luganda'];
+  bool _isStartingConversation = false;
 
-  void _onHeartPressed() {
-    setState(() {
-      _isSaved = !_isSaved;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadProfile();
     });
+  }
+
+  Future<void> _loadProfile() async {
+    final parentProvider = context.read<ParentProvider>();
+    await parentProvider.loadBabysitter(widget.babysitterId);
+    if (!mounted) {
+      return;
+    }
+    if (!parentProvider.isSaved(widget.babysitterId)) {
+      await parentProvider.loadSavedSitters();
+      if (!mounted) {
+        return;
+      }
+    }
+    await _handleUnauthorized(parentProvider.lastStatusCode);
+  }
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  String _formatRate(BabysitterProfile sitter) {
+    final amount = sitter.rateAmount;
+    final currency = (sitter.currency ?? 'UGX').trim();
+    final rateType = (sitter.rateType ?? 'hourly').trim();
+
+    if (amount == null) {
+      return 'Rate not set';
+    }
+
+    final amountText = amount % 1 == 0
+        ? amount.toInt().toString()
+        : amount.toStringAsFixed(2);
+    return '$amountText $currency/$rateType';
+  }
+
+  Future<void> _toggleSaved(BabysitterProfile sitter) async {
+    final parentProvider = context.read<ParentProvider>();
+    final success = await parentProvider.toggleSavedSitter(sitter);
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      await _handleUnauthorized(parentProvider.lastStatusCode);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            parentProvider.errorMessage ??
+                'Unable to update your saved sitters right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          _isSaved ? 'Saved ${widget.sitterName}' : 'Removed from saved',
-        ),
-        duration: const Duration(seconds: 1),
+        content: Text(parentProvider.successMessage ?? 'Saved list updated.'),
       ),
     );
   }
 
-  void _onMessagePressed() {
-    // TODO: Navigate to chat thread with this sitter
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Message ${widget.sitterName} (feature coming soon)'),
+  Future<void> _startConversation(BabysitterProfile sitter) async {
+    if (_isStartingConversation) {
+      return;
+    }
+
+    setState(() {
+      _isStartingConversation = true;
+    });
+
+    final conversationsProvider = context.read<ConversationsProvider>();
+    final conversation = await conversationsProvider.startConversation(
+      sitter.id,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (conversation == null) {
+      setState(() {
+        _isStartingConversation = false;
+      });
+      await _handleUnauthorized(conversationsProvider.lastStatusCode);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            conversationsProvider.errorMessage ??
+                'Unable to start a conversation right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isStartingConversation = false;
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ParentChatThreadScreen(
+          conversationId: conversation.id,
+          title: sitter.fullName,
+          subtitle:
+              (conversation.participantOccupation ??
+                      conversation.participantRole ??
+                      'Babysitter')
+                  .trim(),
+          avatarUrl: sitter.profilePictureUrl,
+          phoneNumber: sitter.phone,
+          participantProfile: sitter,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      body: Stack(
-        children: [
-          SafeArea(
-            child: Column(
-              children: [
-                // Header
-                _buildHeader(),
+    return Consumer<ParentProvider>(
+      builder: (context, parentProvider, _) {
+        final sitter = parentProvider.selectedSitter;
+        final isSaved = sitter != null && parentProvider.isSaved(sitter.id);
 
-                // Scrollable Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 24,
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          body: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    _buildHeader(
+                      isSaved: isSaved,
+                      onSavePressed: sitter == null
+                          ? null
+                          : () => _toggleSaved(sitter),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Avatar Section (centered)
-                        Center(child: _buildAvatarSection()),
-
-                        const SizedBox(height: 32),
-
-                        // Info Card
-                        _buildInfoCard(),
-
-                        const SizedBox(height: 32),
-
-                        // Availability Section
-                        _buildAvailabilitySection(),
-
-                        const SizedBox(height: 16),
-
-                        // Languages Section
-                        _buildLanguagesSection(),
-
-                        const SizedBox(height: 100), // Space for button
-                      ],
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadProfile,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 24,
+                          ),
+                          child: _buildBody(parentProvider, sitter),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              if (sitter != null)
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  bottom: 24,
+                  child: _buildMessageButton(sitter),
+                ),
+            ],
           ),
-          // Message Button at Bottom
-          Positioned(
-            left: 24,
-            right: 24,
-            bottom: 24,
-            child: _buildMessageButton(),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  /// Header with back arrow and heart save icon
-  Widget _buildHeader() {
+  Widget _buildBody(ParentProvider parentProvider, BabysitterProfile? sitter) {
+    if (parentProvider.isLoadingSelectedSitter && sitter == null) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 80),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (parentProvider.errorMessage != null && sitter == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 64),
+        child: Center(
+          child: Column(
+            children: [
+              Text(
+                parentProvider.errorMessage!,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadProfile,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: BabyCareTheme.primaryBerry,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (sitter == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(child: _buildAvatarSection(sitter)),
+        const SizedBox(height: 32),
+        _buildInfoCard(sitter),
+        const SizedBox(height: 32),
+        _buildStatusSection(sitter),
+        const SizedBox(height: 16),
+        _buildAvailabilitySection(sitter),
+        const SizedBox(height: 16),
+        _buildLanguagesSection(sitter),
+        const SizedBox(height: 100),
+      ],
+    );
+  }
+
+  Widget _buildHeader({
+    required bool isSaved,
+    required VoidCallback? onSavePressed,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Stack(
@@ -138,9 +304,9 @@ class _SitterProfileParentViewScreenState
           Positioned(
             right: 0,
             child: GestureDetector(
-              onTap: _onHeartPressed,
+              onTap: onSavePressed,
               child: Icon(
-                _isSaved ? Icons.bookmark_rounded : Icons.bookmark_outline,
+                isSaved ? Icons.bookmark_rounded : Icons.bookmark_outline,
                 color: BabyCareTheme.primaryBerry,
                 size: 24,
               ),
@@ -151,8 +317,9 @@ class _SitterProfileParentViewScreenState
     );
   }
 
-  /// Avatar with name section
-  Widget _buildAvatarSection() {
+  Widget _buildAvatarSection(BabysitterProfile sitter) {
+    final imageUrl = (sitter.profilePictureUrl ?? '').trim();
+
     return Column(
       children: [
         Container(
@@ -163,23 +330,38 @@ class _SitterProfileParentViewScreenState
             border: Border.all(color: BabyCareTheme.primaryBerry, width: 4),
           ),
           child: ClipOval(
-            child: Image.asset('assets/logo.png', fit: BoxFit.cover),
+            child: imageUrl.isNotEmpty
+                ? Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+                    },
+                  )
+                : Image.asset('assets/logo.png', fit: BoxFit.cover),
           ),
         ),
         const SizedBox(height: 16),
         Text(
-          widget.sitterName,
+          sitter.fullName,
           style: Theme.of(context).textTheme.headlineSmall!.copyWith(
             color: BabyCareTheme.primaryBerry,
             fontWeight: FontWeight.bold,
           ),
         ),
+        const SizedBox(height: 6),
+        Text(
+          sitter.email,
+          style: Theme.of(context).textTheme.bodySmall!.copyWith(
+            color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+          ),
+          textAlign: TextAlign.center,
+        ),
       ],
     );
   }
 
-  /// Info card with metadata
-  Widget _buildInfoCard() {
+  Widget _buildInfoCard(BabysitterProfile sitter) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -189,34 +371,48 @@ class _SitterProfileParentViewScreenState
       ),
       child: Column(
         children: [
-          // Gender Row
           _buildInfoRow(
             icon: Icons.person_outline,
             label: 'Gender',
-            value: widget.gender,
+            value: (sitter.gender ?? '').trim().isEmpty
+                ? 'Not specified'
+                : sitter.gender!,
           ),
           const SizedBox(height: 16),
-
-          // Location Row
           _buildInfoRow(
             icon: Icons.location_on_outlined,
             label: 'Location',
-            value: widget.location,
+            value: (sitter.location ?? '').trim().isEmpty
+                ? 'Location not provided'
+                : sitter.location!,
           ),
           const SizedBox(height: 16),
-
-          // Rate Row
           _buildInfoRow(
             icon: Icons.attach_money_outlined,
             label: 'Rate',
-            value: widget.rate,
+            value: _formatRate(sitter),
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            icon: Icons.call_outlined,
+            label: 'Phone',
+            value: (sitter.phone ?? '').trim().isEmpty
+                ? 'Phone not provided'
+                : sitter.phone!,
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            icon: Icons.payments_outlined,
+            label: 'Payment Method',
+            value: (sitter.paymentMethod ?? '').trim().isEmpty
+                ? 'Payment method not provided'
+                : sitter.paymentMethod!,
           ),
         ],
       ),
     );
   }
 
-  /// Individual info row
   Widget _buildInfoRow({
     required IconData icon,
     required String label,
@@ -260,8 +456,9 @@ class _SitterProfileParentViewScreenState
     );
   }
 
-  /// Availability section with day pills
-  Widget _buildAvailabilitySection() {
+  Widget _buildAvailabilitySection(BabysitterProfile sitter) {
+    final days = sitter.availability;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -279,28 +476,69 @@ class _SitterProfileParentViewScreenState
             ),
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: List.generate(
-              _availableDays.length,
-              (index) => Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: BabyCareTheme.lightPink,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  _availableDays[index],
-                  style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                    color: BabyCareTheme.primaryBerry,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+          if (days.isEmpty)
+            Text(
+              'No availability has been shared yet.',
+              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
               ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: days
+                  .map(
+                    (day) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: BabyCareTheme.lightPink,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        day,
+                        style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                          color: BabyCareTheme.primaryBerry,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusSection(BabysitterProfile sitter) {
+    final status = sitter.status.trim().isEmpty ? 'unknown' : sitter.status;
+    final availability = sitter.isAvailable == true
+        ? 'Available now'
+        : 'Unavailable';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: BabyCareTheme.lightGrey.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildStatusChip(
+              label: 'Status',
+              value: status[0].toUpperCase() + status.substring(1),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildStatusChip(
+              label: 'Availability',
+              value: availability,
             ),
           ),
         ],
@@ -308,8 +546,40 @@ class _SitterProfileParentViewScreenState
     );
   }
 
-  /// Languages section
-  Widget _buildLanguagesSection() {
+  Widget _buildStatusChip({required String label, required String value}) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: BabyCareTheme.universalWhite,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: BabyCareTheme.lightGrey, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall!.copyWith(
+              color: BabyCareTheme.primaryBerry,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+              color: BabyCareTheme.darkGrey,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLanguagesSection(BabysitterProfile sitter) {
+    final languages = sitter.languages;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -327,37 +597,45 @@ class _SitterProfileParentViewScreenState
             ),
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: List.generate(
-              _languages.length,
-              (index) => Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: BabyCareTheme.lightPink,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  _languages[index],
-                  style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                    color: BabyCareTheme.primaryBerry,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+          if (languages.isEmpty)
+            Text(
+              'No languages listed yet.',
+              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
               ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: languages
+                  .map(
+                    (language) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: BabyCareTheme.lightPink,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        language,
+                        style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                          color: BabyCareTheme.primaryBerry,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
-          ),
         ],
       ),
     );
   }
 
-  /// Message button at bottom
-  Widget _buildMessageButton() {
+  Widget _buildMessageButton(BabysitterProfile sitter) {
     return Container(
       decoration: BoxDecoration(
         gradient: BabyCareTheme.primaryGradient,
@@ -371,7 +649,7 @@ class _SitterProfileParentViewScreenState
         ],
       ),
       child: ElevatedButton(
-        onPressed: _onMessagePressed,
+        onPressed: _isStartingConversation ? null : () => _startConversation(sitter),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
@@ -380,14 +658,28 @@ class _SitterProfileParentViewScreenState
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.message_rounded,
-              color: BabyCareTheme.universalWhite,
-              size: 20,
-            ),
+            if (_isStartingConversation)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    BabyCareTheme.universalWhite,
+                  ),
+                ),
+              )
+            else
+              const Icon(
+                Icons.message_rounded,
+                color: BabyCareTheme.universalWhite,
+                size: 20,
+              ),
             const SizedBox(width: 8),
             Text(
-              'Message ${widget.sitterName}',
+              _isStartingConversation
+                  ? 'Opening chat...'
+                  : 'Message ${sitter.fullName}',
               style: Theme.of(context).textTheme.titleSmall!.copyWith(
                 color: BabyCareTheme.universalWhite,
                 fontWeight: FontWeight.bold,

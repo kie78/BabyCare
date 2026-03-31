@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../models/auth_user.dart';
+import '../providers/auth_provider.dart';
 import 'gateway_screen.dart';
 import 'parent_account_creation.dart';
 import 'parent_discover.dart';
@@ -30,7 +34,7 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
     super.dispose();
   }
 
-  void _onLoginPressed() {
+  Future<void> _onLoginPressed() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -38,10 +42,43 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
       return;
     }
 
-    // TODO: Authenticate with backend
-    // For now, simulate login and navigate to parent dashboard
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const ParentDiscoverScreen()),
+    final authProvider = context.read<AuthProvider>();
+    final success = await authProvider.login(
+      email: _emailController.text.trim(),
+      password: _passwordController.text,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (success) {
+      if (authProvider.currentRole == UserRole.parent) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const ParentDiscoverScreen()),
+          (route) => false,
+        );
+        return;
+      }
+
+      await authProvider.logout();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This account does not have parent access.'),
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          authProvider.errorMessage ?? 'Login failed. Please try again.',
+        ),
+      ),
     );
   }
 
@@ -328,6 +365,8 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
 
   /// Login button
   Widget _buildLoginButton() {
+    final isLoading = context.watch<AuthProvider>().isLoading;
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -335,19 +374,30 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
         borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
       ),
       child: ElevatedButton(
-        onPressed: _onLoginPressed,
+        onPressed: isLoading ? null : _onLoginPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
-        child: Text(
-          'Log In',
-          style: Theme.of(context).textTheme.titleMedium!.copyWith(
-            color: BabyCareTheme.universalWhite,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    BabyCareTheme.universalWhite,
+                  ),
+                ),
+              )
+            : Text(
+                'Log In',
+                style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                  color: BabyCareTheme.universalWhite,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
       ),
     );
   }

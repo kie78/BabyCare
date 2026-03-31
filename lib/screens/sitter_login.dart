@@ -10,7 +10,14 @@ import 'sitter_registration_step1.dart';
 import 'gateway_screen.dart';
 
 class SitterLoginScreen extends StatefulWidget {
-  const SitterLoginScreen({super.key});
+  const SitterLoginScreen({
+    super.key,
+    this.successMessage,
+    this.showPendingApprovalBanner = false,
+  });
+
+  final String? successMessage;
+  final bool showPendingApprovalBanner;
 
   @override
   State<SitterLoginScreen> createState() => _SitterLoginScreenState();
@@ -26,6 +33,17 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
     super.initState();
     _emailController = TextEditingController();
     _passwordController = TextEditingController();
+
+    if (widget.successMessage != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(widget.successMessage!)),
+        );
+      });
+    }
   }
 
   @override
@@ -168,10 +186,10 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
 
               const SizedBox(height: 32),
 
-              // Status Alert
-              _buildStatusAlert(),
-
-              const SizedBox(height: 32),
+              if (widget.showPendingApprovalBanner) ...[
+                _buildStatusAlert(),
+                const SizedBox(height: 32),
+              ],
 
               // Form Fields
               _buildFormFields(),

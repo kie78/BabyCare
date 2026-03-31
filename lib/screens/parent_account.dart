@@ -1,8 +1,17 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../models/babysitter_profile.dart';
+import '../models/parent_profile.dart';
+import '../providers/auth_provider.dart';
+import '../providers/parent_provider.dart';
+import 'gateway_screen.dart';
 import 'parent_discover.dart';
 import 'parent_messages.dart';
-import 'parent_login.dart';
 import 'sitter_profile_parent_view.dart';
 
 class ParentAccountScreen extends StatefulWidget {
@@ -13,6 +22,17 @@ class ParentAccountScreen extends StatefulWidget {
 }
 
 class _ParentAccountScreenState extends State<ParentAccountScreen> {
+  Future<void> _logout() async {
+    await context.read<AuthProvider>().logout();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -131,11 +151,7 @@ class _ParentAccountScreenState extends State<ParentAccountScreen> {
                 color: BabyCareTheme.lightPink,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(
-                icon,
-                color: BabyCareTheme.primaryBerry,
-                size: 28,
-              ),
+              child: Icon(icon, color: BabyCareTheme.primaryBerry, size: 28),
             ),
             const SizedBox(width: 16),
 
@@ -161,8 +177,6 @@ class _ParentAccountScreenState extends State<ParentAccountScreen> {
                 ],
               ),
             ),
-
-
           ],
         ),
       ),
@@ -180,13 +194,7 @@ class _ParentAccountScreenState extends State<ParentAccountScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (context) => const ParentLoginScreen(),
-              ),
-            );
-          },
+          onTap: _logout,
           borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 14),
@@ -319,108 +327,414 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
   late TextEditingController _phoneController;
   late TextEditingController _locationController;
   late TextEditingController _emailController;
+  late FocusNode _nameFocusNode;
+  late FocusNode _occupationFocusNode;
+  late FocusNode _hoursFocusNode;
+  late FocusNode _phoneFocusNode;
+  late FocusNode _locationFocusNode;
+  late FocusNode _emailFocusNode;
+  ParentProfile? _initialProfile;
+  String? _selectedProfileImagePath;
+  bool _hasChanges = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: 'Sarah Johnson');
-    _occupationController = TextEditingController(text: 'Marketing Manager');
-    _hoursController = TextEditingController(text: '9AM - 5PM');
-    _phoneController = TextEditingController(text: '+256 701 234567');
-    _locationController = TextEditingController(text: 'Kampala, Uganda');
-    _emailController = TextEditingController(text: 'sarah@email.com');
+    _nameController = TextEditingController();
+    _occupationController = TextEditingController();
+    _hoursController = TextEditingController();
+    _phoneController = TextEditingController();
+    _locationController = TextEditingController();
+    _emailController = TextEditingController();
+    _nameFocusNode = FocusNode();
+    _occupationFocusNode = FocusNode();
+    _hoursFocusNode = FocusNode();
+    _phoneFocusNode = FocusNode();
+    _locationFocusNode = FocusNode();
+    _emailFocusNode = FocusNode();
+    _nameController.addListener(_updateHasChanges);
+    _occupationController.addListener(_updateHasChanges);
+    _hoursController.addListener(_updateHasChanges);
+    _phoneController.addListener(_updateHasChanges);
+    _locationController.addListener(_updateHasChanges);
+    _emailController.addListener(_updateHasChanges);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadProfile();
+    });
   }
 
   @override
   void dispose() {
+    _nameController.removeListener(_updateHasChanges);
+    _occupationController.removeListener(_updateHasChanges);
+    _hoursController.removeListener(_updateHasChanges);
+    _phoneController.removeListener(_updateHasChanges);
+    _locationController.removeListener(_updateHasChanges);
+    _emailController.removeListener(_updateHasChanges);
     _nameController.dispose();
     _occupationController.dispose();
     _hoursController.dispose();
     _phoneController.dispose();
     _locationController.dispose();
     _emailController.dispose();
+    _nameFocusNode.dispose();
+    _occupationFocusNode.dispose();
+    _hoursFocusNode.dispose();
+    _phoneFocusNode.dispose();
+    _locationFocusNode.dispose();
+    _emailFocusNode.dispose();
     super.dispose();
+  }
+
+  String _normalizeValue(String? value) {
+    return (value ?? '').trim();
+  }
+
+  ParentProfile? _fallbackProfileFromSession() {
+    final authUser = context.read<AuthProvider>().currentUser;
+    if (authUser == null) {
+      return null;
+    }
+
+    return ParentProfile(
+      id: authUser.id,
+      fullName: authUser.fullName,
+      email: authUser.email,
+      occupation: '',
+      preferredHours: '',
+      phone: authUser.phone,
+      location: '',
+      primaryLocation: '',
+      status: authUser.status,
+    );
+  }
+
+  void _updateHasChanges() {
+    final initialProfile = _initialProfile;
+    if (initialProfile == null) {
+      if (_hasChanges) {
+        setState(() {
+          _hasChanges = false;
+        });
+      }
+      return;
+    }
+
+    final fieldsChanged = _normalizeValue(_nameController.text) !=
+            _normalizeValue(initialProfile.fullName) ||
+        _normalizeValue(_occupationController.text) !=
+            _normalizeValue(initialProfile.occupation) ||
+        _normalizeValue(_hoursController.text) !=
+            _normalizeValue(initialProfile.preferredHours) ||
+        _normalizeValue(_phoneController.text) !=
+            _normalizeValue(initialProfile.phone) ||
+        _normalizeValue(_locationController.text) !=
+            _normalizeValue(
+              initialProfile.primaryLocation ?? initialProfile.location,
+            ) ||
+        _normalizeValue(_emailController.text) !=
+            _normalizeValue(initialProfile.email);
+
+    final imageChanged = _normalizeValue(_selectedProfileImagePath).isNotEmpty;
+
+    final nextHasChanges = fieldsChanged || imageChanged;
+    if (nextHasChanges == _hasChanges) {
+      return;
+    }
+
+    setState(() {
+      _hasChanges = nextHasChanges;
+    });
+  }
+
+  void _syncFormWithProfile(ParentProfile profile) {
+    _initialProfile = profile;
+    _nameController.text = profile.fullName;
+    _occupationController.text = profile.occupation;
+    _hoursController.text = profile.preferredHours;
+    _phoneController.text = profile.phone ?? '';
+    _locationController.text = profile.primaryLocation ?? profile.location ?? '';
+    _emailController.text = profile.email;
+    _selectedProfileImagePath = null;
+    _updateHasChanges();
+  }
+
+  Future<void> _pickProfileImage() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+    );
+
+    if (!mounted || result == null || result.files.isEmpty) {
+      return;
+    }
+
+    final file = result.files.single;
+    final path = file.path;
+    if (path == null || path.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to access the selected image. Try again.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _selectedProfileImagePath = path;
+    });
+    _updateHasChanges();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${file.name} selected successfully.'),
+      ),
+    );
+  }
+
+  void _focusField(FocusNode focusNode, TextEditingController controller) {
+    focusNode.requestFocus();
+    controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: controller.text.length),
+    );
+  }
+
+  Future<void> _loadProfile() async {
+    final parentProvider = context.read<ParentProvider>();
+    await parentProvider.loadParentProfile();
+    if (!mounted) {
+      return;
+    }
+    await _handleUnauthorized(parentProvider.lastStatusCode);
+    if (!mounted) {
+      return;
+    }
+
+    final profile = parentProvider.profile;
+    if (profile != null) {
+      _syncFormWithProfile(profile);
+      return;
+    }
+
+    final fallbackProfile = _fallbackProfileFromSession();
+    if (fallbackProfile != null) {
+      _syncFormWithProfile(fallbackProfile);
+      if ((parentProvider.errorMessage ?? '').trim().isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Your basic account details were loaded. Some profile fields could not be fetched from the server.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _saveProfile() async {
+    final parentProvider = context.read<ParentProvider>();
+    final currentProfile = parentProvider.profile ?? _initialProfile;
+    if (currentProfile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Load your profile before saving changes.'),
+        ),
+      );
+      return;
+    }
+
+    final updatedProfile = ParentProfile(
+      id: currentProfile.id,
+      fullName: _nameController.text.trim(),
+      email: _emailController.text.trim(),
+      occupation: _occupationController.text.trim(),
+      preferredHours: _hoursController.text.trim(),
+      phone: _phoneController.text.trim(),
+      location: _locationController.text.trim(),
+      primaryLocation: _locationController.text.trim(),
+      profilePictureUrl: currentProfile.profilePictureUrl,
+      status: currentProfile.status,
+    );
+
+    final selectedImagePath = _normalizeValue(_selectedProfileImagePath);
+    final hadAvatarChange = selectedImagePath.isNotEmpty;
+    final success = await parentProvider.updateParentProfile(
+      updatedProfile,
+      profilePicturePath: hadAvatarChange ? selectedImagePath : null,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      await _handleUnauthorized(parentProvider.lastStatusCode);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            parentProvider.errorMessage ??
+                'Unable to save your profile right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final savedProfile = parentProvider.profile ?? updatedProfile;
+    _syncFormWithProfile(savedProfile);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          hadAvatarChange
+              ? 'Profile and avatar updated successfully.'
+              : (parentProvider.successMessage ??
+                    'Profile updated successfully.'),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(),
-
-            // Scrollable Content
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 24),
-
-                    // Avatar Section
-                    _buildAvatarSection(),
-
-                    const SizedBox(height: 32),
-
-                    // Form Fields
-                    _buildFormField(
-                      label: 'Full Name',
-                      icon: Icons.person_outline,
-                      controller: _nameController,
+    return Consumer<ParentProvider>(
+      builder: (context, parentProvider, _) {
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _loadProfile,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: _buildProfileBody(parentProvider),
                     ),
-                    const SizedBox(height: 12),
-
-                    _buildFormField(
-                      label: 'Occupation',
-                      icon: Icons.work_outline,
-                      controller: _occupationController,
-                    ),
-                    const SizedBox(height: 12),
-
-                    _buildFormField(
-                      label: 'Preferred Hours',
-                      icon: Icons.schedule_outlined,
-                      controller: _hoursController,
-                    ),
-                    const SizedBox(height: 12),
-
-                    _buildFormField(
-                      label: 'Phone Number',
-                      icon: Icons.phone_outlined,
-                      controller: _phoneController,
-                    ),
-                    const SizedBox(height: 12),
-
-                    _buildFormField(
-                      label: 'Primary Location',
-                      icon: Icons.location_on_outlined,
-                      controller: _locationController,
-                    ),
-                    const SizedBox(height: 12),
-
-                    _buildFormField(
-                      label: 'Email Address',
-                      icon: Icons.email_outlined,
-                      controller: _emailController,
-                    ),
-
-                    const SizedBox(height: 32),
-
-                    // Save Button
-                    _buildSaveButton(),
-
-                    const SizedBox(height: 24),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildProfileBody(ParentProvider parentProvider) {
+    final hasLocalFallbackProfile = _initialProfile != null;
+
+    if (parentProvider.isLoadingProfile &&
+        parentProvider.profile == null &&
+        !hasLocalFallbackProfile) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 120),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (parentProvider.errorMessage != null &&
+        parentProvider.profile == null &&
+        !hasLocalFallbackProfile) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 120),
+        child: Center(
+          child: Column(
+            children: [
+              Text(
+                parentProvider.errorMessage!,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadProfile,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: BabyCareTheme.primaryBerry,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
         ),
-      ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 24),
+        _buildAvatarSection(),
+        const SizedBox(height: 32),
+        _buildFormField(
+          label: 'Full Name',
+          icon: Icons.person_outline,
+          controller: _nameController,
+          focusNode: _nameFocusNode,
+        ),
+        const SizedBox(height: 12),
+        _buildFormField(
+          label: 'Occupation',
+          icon: Icons.work_outline,
+          controller: _occupationController,
+          focusNode: _occupationFocusNode,
+        ),
+        const SizedBox(height: 12),
+        _buildFormField(
+          label: 'Preferred Hours',
+          icon: Icons.schedule_outlined,
+          controller: _hoursController,
+          focusNode: _hoursFocusNode,
+        ),
+        const SizedBox(height: 12),
+        _buildFormField(
+          label: 'Phone Number',
+          icon: Icons.phone_outlined,
+          controller: _phoneController,
+          focusNode: _phoneFocusNode,
+        ),
+        const SizedBox(height: 12),
+        _buildFormField(
+          label: 'Primary Location',
+          icon: Icons.location_on_outlined,
+          controller: _locationController,
+          focusNode: _locationFocusNode,
+        ),
+        const SizedBox(height: 12),
+        _buildFormField(
+          label: 'Email Address',
+          icon: Icons.email_outlined,
+          controller: _emailController,
+          focusNode: _emailFocusNode,
+        ),
+        if (_hasChanges) ...[
+          const SizedBox(height: 32),
+          _buildSaveButton(parentProvider.isUpdatingProfile),
+        ],
+        const SizedBox(height: 24),
+      ],
     );
   }
 
@@ -458,41 +772,60 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
 
   /// Avatar with Camera overlay
   Widget _buildAvatarSection() {
+    final localImagePath = _normalizeValue(_selectedProfileImagePath);
+    final remoteImageUrl = _normalizeValue(_initialProfile?.profilePictureUrl);
+
     return Center(
       child: Stack(
         children: [
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: BabyCareTheme.primaryBerry,
-                width: 3,
+          GestureDetector(
+            onTap: _pickProfileImage,
+            child: Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: BabyCareTheme.primaryBerry,
+                  width: 3,
+                ),
               ),
-            ),
-            child: ClipOval(
-              child: Image.asset('assets/logo.png', fit: BoxFit.cover),
+              child: ClipOval(
+                child: localImagePath.isNotEmpty
+                    ? Image.file(File(localImagePath), fit: BoxFit.cover)
+                    : remoteImageUrl.isNotEmpty
+                    ? Image.network(
+                        remoteImageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Image.asset('assets/logo.png', fit: BoxFit.cover);
+                        },
+                      )
+                    : Image.asset('assets/logo.png', fit: BoxFit.cover),
+              ),
             ),
           ),
           Positioned(
             right: 0,
             bottom: 0,
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: BabyCareTheme.primaryBerry,
-                border: Border.all(
-                  color: BabyCareTheme.universalWhite,
-                  width: 2,
+            child: GestureDetector(
+              onTap: _pickProfileImage,
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: BabyCareTheme.primaryBerry,
+                  border: Border.all(
+                    color: BabyCareTheme.universalWhite,
+                    width: 2,
+                  ),
                 ),
-              ),
-              child: const Icon(
-                Icons.camera_alt,
-                color: BabyCareTheme.universalWhite,
-                size: 18,
+                child: const Icon(
+                  Icons.camera_alt,
+                  color: BabyCareTheme.universalWhite,
+                  size: 18,
+                ),
               ),
             ),
           ),
@@ -506,6 +839,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     required String label,
     required IconData icon,
     required TextEditingController controller,
+    required FocusNode focusNode,
   }) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -524,11 +858,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
               color: BabyCareTheme.lightPink,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(
-              icon,
-              color: BabyCareTheme.primaryBerry,
-              size: 20,
-            ),
+            child: Icon(icon, color: BabyCareTheme.primaryBerry, size: 20),
           ),
           const SizedBox(width: 12),
 
@@ -536,23 +866,27 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
           Expanded(
             child: TextField(
               controller: controller,
+              focusNode: focusNode,
               decoration: InputDecoration(
                 hintText: label,
                 border: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
               ),
-              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-                color: BabyCareTheme.darkGrey,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
             ),
           ),
 
           // Edit icon
-          Icon(
-            Icons.edit_outlined,
-            color: BabyCareTheme.primaryBerry,
-            size: 18,
+          GestureDetector(
+            onTap: () => _focusField(focusNode, controller),
+            child: const Icon(
+              Icons.edit_outlined,
+              color: BabyCareTheme.primaryBerry,
+              size: 18,
+            ),
           ),
         ],
       ),
@@ -560,7 +894,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
   }
 
   /// Save Changes button
-  Widget _buildSaveButton() {
+  Widget _buildSaveButton(bool isSaving) {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -570,22 +904,31 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Profile updated successfully')),
-            );
-          },
+          onTap: isSaving ? null : _saveProfile,
           borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 14),
-            child: Text(
-              'Save Changes',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleSmall!.copyWith(
-                color: BabyCareTheme.universalWhite,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            child: isSaving
+                ? const Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          BabyCareTheme.universalWhite,
+                        ),
+                      ),
+                    ),
+                  )
+                : Text(
+                    'Save Changes',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleSmall!.copyWith(
+                      color: BabyCareTheme.universalWhite,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
           ),
         ),
       ),
@@ -603,28 +946,69 @@ class ParentSavedSittersScreen extends StatefulWidget {
 }
 
 class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
-  late List<_SavedSitter> savedSitters = [
-    _SavedSitter(
-      name: 'Maria Elena',
-      gender: 'Female',
-      rate: '15,000 UGX/hr',
-      location: 'Kampala, Uganda',
-    ),
-    _SavedSitter(
-      name: 'Grace Okello',
-      gender: 'Female',
-      rate: '12,000 UGX/hr',
-      location: 'Kololo, Kampala',
-    ),
-    _SavedSitter(
-      name: 'Sarah Namukasa',
-      gender: 'Female',
-      rate: '14,000 UGX/hr',
-      location: 'Ntinda, Kampala',
-    ),
-  ];
+  Widget _buildProfileImage(String? imageUrl) {
+    final normalizedUrl = (imageUrl ?? '').trim();
 
-  void _showRemoveDialog(int index) {
+    if (normalizedUrl.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSavedSitters();
+    });
+  }
+
+  Future<void> _loadSavedSitters() async {
+    final parentProvider = context.read<ParentProvider>();
+    await parentProvider.loadSavedSitters();
+    if (!mounted) {
+      return;
+    }
+    await _handleUnauthorized(parentProvider.lastStatusCode);
+  }
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  String _formatRate(BabysitterProfile sitter) {
+    final amount = sitter.rateAmount;
+    final currency = (sitter.currency ?? 'UGX').trim();
+    final rateType = (sitter.rateType ?? 'hourly').trim();
+    if (amount == null) {
+      return 'Rate not set';
+    }
+    final amountText = amount % 1 == 0
+        ? amount.toInt().toString()
+        : amount.toStringAsFixed(2);
+    return '$amountText $currency/$rateType';
+  }
+
+  void _showRemoveDialog(BabysitterProfile sitter) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -636,7 +1020,7 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
           ),
         ),
         content: Text(
-          'Are you sure you want to remove ${savedSitters[index].name} from your saved sitters?',
+          'Are you sure you want to remove ${sitter.fullName} from your saved sitters?',
           style: Theme.of(context).textTheme.bodyMedium!.copyWith(
             color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
           ),
@@ -655,15 +1039,33 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
             style: FilledButton.styleFrom(
               backgroundColor: BabyCareTheme.primaryBerry,
             ),
-            onPressed: () {
-              setState(() {
-                savedSitters.removeAt(index);
-              });
+            onPressed: () async {
+              final parentProvider = context.read<ParentProvider>();
+              final success = await parentProvider.toggleSavedSitter(sitter);
+              if (!context.mounted) {
+                return;
+              }
               Navigator.of(context).pop();
+              if (!success) {
+                await _handleUnauthorized(parentProvider.lastStatusCode);
+                if (!context.mounted) {
+                  return;
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      parentProvider.errorMessage ??
+                          'Unable to update your saved sitters right now.',
+                    ),
+                  ),
+                );
+                return;
+              }
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('${savedSitters.length < 3 ? '' : ''}Removed from saved'),
-                  duration: const Duration(seconds: 1),
+                  content: Text(
+                    parentProvider.successMessage ?? 'Saved list updated.',
+                  ),
                 ),
               );
             },
@@ -682,60 +1084,114 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      extendBody: true,
-      body: Stack(
-        children: [
-          SafeArea(
-            child: Column(
-              children: [
-                // Header with back arrow
-                _buildHeader(),
+    return Consumer<ParentProvider>(
+      builder: (context, parentProvider, _) {
+        final savedSitters = parentProvider.savedSitters;
 
-                // Saved Sitters List
-                Expanded(
-                  child: savedSitters.isEmpty
-                      ? _buildEmptyState()
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
-                          itemCount: savedSitters.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (context, index) {
-                            return GestureDetector(
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        SitterProfileParentViewScreen(
-                                      sitterName: savedSitters[index].name,
-                                      gender: savedSitters[index].gender,
-                                      location: savedSitters[index].location,
-                                      rate: savedSitters[index].rate,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: _buildSitterCard(
-                                savedSitters[index],
-                                index,
-                              ),
-                            );
-                          },
-                        ),
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          extendBody: true,
+          body: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    _buildHeader(),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadSavedSitters,
+                        child: _buildSavedBody(parentProvider, savedSitters),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+              Positioned(
+                left: 21,
+                right: 21,
+                bottom: 16,
+                child: _buildBottomNavigation(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSavedBody(
+    ParentProvider parentProvider,
+    List<BabysitterProfile> savedSitters,
+  ) {
+    if (parentProvider.isLoadingSavedSitters && savedSitters.isEmpty) {
+      return ListView(
+        physics: AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: 180),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+
+    if (parentProvider.errorMessage != null && savedSitters.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 120),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                children: [
+                  Text(
+                    parentProvider.errorMessage!,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                      color: BabyCareTheme.darkGrey,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _loadSavedSitters,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: BabyCareTheme.primaryBerry,
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
             ),
           ),
-          Positioned(
-            left: 21,
-            right: 21,
-            bottom: 16,
-            child: _buildBottomNavigation(),
-          ),
         ],
-      ),
+      );
+    }
+
+    if (savedSitters.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [_buildEmptyState()],
+      );
+    }
+
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+      itemCount: savedSitters.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final sitter = savedSitters[index];
+        return GestureDetector(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) =>
+                    SitterProfileParentViewScreen(babysitterId: sitter.id),
+              ),
+            );
+          },
+          child: _buildSitterCard(sitter),
+        );
+      },
     );
   }
 
@@ -795,7 +1251,7 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
   }
 
   /// Sitter card with bookmark at bottom right
-  Widget _buildSitterCard(_SavedSitter sitter, int index) {
+  Widget _buildSitterCard(BabysitterProfile sitter) {
     return Stack(
       children: [
         Container(
@@ -819,7 +1275,7 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
                   ),
                 ),
                 child: ClipOval(
-                  child: Image.asset('assets/logo.png', fit: BoxFit.cover),
+                  child: _buildProfileImage(sitter.profilePictureUrl),
                 ),
               ),
               const SizedBox(width: 12),
@@ -830,7 +1286,7 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      sitter.name,
+                      sitter.fullName,
                       style: Theme.of(context).textTheme.titleSmall!.copyWith(
                         color: BabyCareTheme.darkGrey,
                         fontWeight: FontWeight.bold,
@@ -838,14 +1294,16 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      sitter.gender,
+                      (sitter.gender ?? 'Not specified').trim().isEmpty
+                          ? 'Not specified'
+                          : sitter.gender!,
                       style: Theme.of(context).textTheme.bodySmall!.copyWith(
                         color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      sitter.rate,
+                      _formatRate(sitter),
                       style: Theme.of(context).textTheme.titleSmall!.copyWith(
                         color: BabyCareTheme.primaryBerry,
                         fontWeight: FontWeight.bold,
@@ -853,7 +1311,9 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      sitter.location,
+                      (sitter.location ?? '').trim().isEmpty
+                          ? 'Location not provided'
+                          : sitter.location!,
                       style: Theme.of(context).textTheme.bodySmall!.copyWith(
                         color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                       ),
@@ -869,17 +1329,14 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
           right: 8,
           bottom: 8,
           child: GestureDetector(
-            onTap: () => _showRemoveDialog(index),
+            onTap: () => _showRemoveDialog(sitter),
             child: Container(
               width: 36,
               height: 36,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: BabyCareTheme.universalWhite,
-                border: Border.all(
-                  color: BabyCareTheme.lightGrey,
-                  width: 2,
-                ),
+                border: Border.all(color: BabyCareTheme.lightGrey, width: 2),
               ),
               child: const Icon(
                 Icons.bookmark_rounded,
@@ -990,19 +1447,4 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
       ),
     );
   }
-}
-
-/// Saved sitter data model
-class _SavedSitter {
-  final String name;
-  final String gender;
-  final String rate;
-  final String location;
-
-  _SavedSitter({
-    required this.name,
-    required this.gender,
-    required this.rate,
-    required this.location,
-  });
 }

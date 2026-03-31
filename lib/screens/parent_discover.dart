@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
-import 'parent_messages.dart';
+import '../models/babysitter_profile.dart';
+import '../providers/auth_provider.dart';
+import '../providers/parent_provider.dart';
+import 'gateway_screen.dart';
 import 'parent_account.dart';
+import 'parent_messages.dart';
 import 'sitter_profile_parent_view.dart';
 
 class ParentDiscoverScreen extends StatefulWidget {
@@ -12,133 +18,481 @@ class ParentDiscoverScreen extends StatefulWidget {
 }
 
 class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
-  late TextEditingController _searchController;
-  late Set<int> _bookmarkedSitters;
-
-  final List<_SitterCard> sitters = const [
-    _SitterCard(
-      name: 'Maria Elena',
-      gender: 'Female',
-      rate: '15,000 UGX/hr',
-      location: 'Kampala, Uganda',
-      isVerified: true,
-    ),
-    _SitterCard(
-      name: 'Grace Okello',
-      gender: 'Female',
-      rate: '12,000 UGX/hr',
-      location: 'Kololo, Kampala',
-      isVerified: true,
-    ),
-    _SitterCard(
-      name: 'Amina Hassan',
-      gender: 'Female',
-      rate: '18,000 UGX/hr',
-      location: 'Makindye, Kampala',
-      isVerified: true,
-    ),
-    _SitterCard(
-      name: 'Sarah Namukasa',
-      gender: 'Female',
-      rate: '14,000 UGX/hr',
-      location: 'Ntinda, Kampala',
-      isVerified: false,
-    ),
-  ];
+  late final TextEditingController _searchController;
+  String? _pendingBookmarkSitterId;
+  String? _selectedLocation;
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
-    _bookmarkedSitters = {};
+    _searchController.addListener(_handleSearchChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadData();
+    });
   }
 
   @override
   void dispose() {
-    _searchController.dispose();
+    _searchController
+      ..removeListener(_handleSearchChanged)
+      ..dispose();
     super.dispose();
   }
 
-  void _onFilterPressed() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Filter & Location feature coming soon')),
+  void _handleSearchChanged() {
+    context.read<ParentProvider>().setSearchQuery(_searchController.text);
+  }
+
+  Future<void> _loadData() async {
+    final parentProvider = context.read<ParentProvider>();
+    await parentProvider.loadSitters();
+    if (!mounted) {
+      return;
+    }
+    await parentProvider.loadSavedSitters();
+    if (!mounted) {
+      return;
+    }
+    if (parentProvider.profile == null) {
+      await parentProvider.loadParentProfile(silent: true);
+      if (!mounted) {
+        return;
+      }
+    }
+    await _handleUnauthorized(parentProvider);
+  }
+
+  Future<void> _handleUnauthorized(ParentProvider parentProvider) async {
+    if (parentProvider.lastStatusCode != 401 &&
+        parentProvider.lastStatusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
     );
   }
 
-  void _onSitterCardPressed(_SitterCard sitter) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => SitterProfileParentViewScreen(
-          sitterName: sitter.name,
-          gender: sitter.gender,
-          location: sitter.location,
-          rate: sitter.rate,
-        ),
+  String _formatRate(BabysitterProfile sitter) {
+    final amount = sitter.rateAmount;
+    final currency = (sitter.currency ?? 'UGX').trim();
+    final rateType = (sitter.rateType ?? 'hourly').trim();
+
+    if (amount == null) {
+      return 'Rate not set';
+    }
+
+    final amountText = amount % 1 == 0
+        ? amount.toInt().toString()
+        : amount.toStringAsFixed(2);
+    return '$amountText $currency/$rateType';
+  }
+
+  String _displayLocation(BabysitterProfile sitter) {
+    final location = (sitter.location ?? '').trim();
+    return location.isEmpty ? 'Location not provided' : location;
+  }
+
+  List<String> _availableLocations(List<BabysitterProfile> sitters) {
+    final uniqueLocations = <String>[];
+    final seenLocations = <String>{};
+
+    for (final sitter in sitters) {
+      final normalizedLocation = (sitter.location ?? '').trim();
+      if (normalizedLocation.isEmpty) {
+        continue;
+      }
+
+      final key = normalizedLocation.toLowerCase();
+      if (seenLocations.add(key)) {
+        uniqueLocations.add(normalizedLocation);
+      }
+    }
+
+    uniqueLocations.sort((first, second) => first.compareTo(second));
+    return uniqueLocations;
+  }
+
+  List<BabysitterProfile> _applyLocationFilter(List<BabysitterProfile> sitters) {
+    final selectedLocation = (_selectedLocation ?? '').trim().toLowerCase();
+    if (selectedLocation.isEmpty) {
+      return sitters;
+    }
+
+    return sitters.where((sitter) {
+      return (sitter.location ?? '').trim().toLowerCase() == selectedLocation;
+    }).toList();
+  }
+
+  Widget _buildProfileImage(String? imageUrl, {double size = 64}) {
+    final normalizedUrl = (imageUrl ?? '').trim();
+
+    if (normalizedUrl.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
+    );
+  }
+
+  Widget _buildCurrentUserAvatar(String? imageUrl) {
+    final normalizedUrl = (imageUrl ?? '').trim();
+
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: BabyCareTheme.primaryBerry, width: 2),
+      ),
+      child: ClipOval(
+        child: normalizedUrl.isEmpty
+            ? Image.asset('assets/logo.png', fit: BoxFit.cover)
+            : Image.network(
+                normalizedUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Image.asset('assets/logo.png', fit: BoxFit.cover);
+                },
+              ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+  Future<void> _toggleSave(BabysitterProfile sitter) async {
+    if (_pendingBookmarkSitterId == sitter.id) {
+      return;
+    }
+
+    setState(() {
+      _pendingBookmarkSitterId = sitter.id;
+    });
+
+    final parentProvider = context.read<ParentProvider>();
+    final success = await parentProvider.toggleSavedSitter(sitter);
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      setState(() {
+        _pendingBookmarkSitterId = null;
+      });
+      await _handleUnauthorized(parentProvider);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            parentProvider.errorMessage ??
+                'Unable to update your saved sitters right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await parentProvider.loadSavedSitters();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _pendingBookmarkSitterId = null;
+    });
+
+    await _handleUnauthorized(parentProvider);
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(parentProvider.successMessage ?? 'Saved updated.'),
+      ),
+    );
+  }
+
+  Future<void> _onFilterPressed() async {
+    final parentProvider = context.read<ParentProvider>();
+    final locations = _availableLocations(parentProvider.sitters);
+
+    if (locations.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No sitter locations are available yet.'),
+        ),
+      );
+      return;
+    }
+
+    final selectedLocation = await showModalBottomSheet<String?>(
+      context: context,
       backgroundColor: BabyCareTheme.universalWhite,
-      extendBody: true,
-      body: Stack(
-        children: [
-          SafeArea(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header
-                _buildHeader(),
-
-                // Search Bar
-                _buildSearchBar(),
-
-                // Scrollable Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 24,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Available Sitters Header
-                        _buildSectionHeader(),
-
-                        const SizedBox(height: 16),
-
-                        // Sitter Cards List
-                        ...List.generate(
-                          sitters.length,
-                          (index) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _buildSitterCard(sitters[index]),
-                          ),
-                        ),
-
-                        const SizedBox(height: 100), // Space for bottom nav
-                      ],
+                Text(
+                  'Filter by location',
+                  style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                    color: BabyCareTheme.darkGrey,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Show sitters from a specific location.',
+                  style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                    color: BabyCareTheme.darkGrey.withValues(alpha: 0.65),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _buildLocationOption(
+                  label: 'All locations',
+                  isSelected: (_selectedLocation ?? '').trim().isEmpty,
+                  onTap: () => Navigator.of(context).pop(''),
+                ),
+                const SizedBox(height: 8),
+                ...locations.map(
+                  (location) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _buildLocationOption(
+                      label: location,
+                      isSelected:
+                          location.toLowerCase() ==
+                          (_selectedLocation ?? '').trim().toLowerCase(),
+                      onTap: () => Navigator.of(context).pop(location),
                     ),
                   ),
                 ),
               ],
             ),
           ),
-          Positioned(
-            left: 21,
-            right: 21,
-            bottom: 16,
-            child: _buildBottomNavigation(),
+        );
+      },
+    );
+
+    if (!mounted || selectedLocation == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedLocation = selectedLocation.trim().isEmpty
+          ? null
+          : selectedLocation;
+    });
+  }
+
+  Widget _buildLocationOption({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? BabyCareTheme.lightPink.withValues(alpha: 0.5)
+                : BabyCareTheme.lightGrey.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected
+                  ? BabyCareTheme.primaryBerry
+                  : BabyCareTheme.lightGrey,
+              width: isSelected ? 1.5 : 1,
+            ),
           ),
-        ],
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                    color: BabyCareTheme.darkGrey,
+                    fontWeight:
+                        isSelected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                const Icon(
+                  Icons.check_circle,
+                  color: BabyCareTheme.primaryBerry,
+                  size: 20,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  /// Header with title and profile thumbnail
-  Widget _buildHeader() {
+  void _onSitterCardPressed(BabysitterProfile sitter) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            SitterProfileParentViewScreen(babysitterId: sitter.id),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ParentProvider>(
+      builder: (context, parentProvider, _) {
+        final sitters = _applyLocationFilter(parentProvider.filteredSitters);
+
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          extendBody: true,
+          body: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    _buildHeader(parentProvider),
+                    _buildSearchBar(),
+                    if ((_selectedLocation ?? '').trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedLocation = null;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: BabyCareTheme.lightPink,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.location_on,
+                                    color: BabyCareTheme.primaryBerry,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _selectedLocation!,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall!.copyWith(
+                                      color: BabyCareTheme.primaryBerry,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(
+                                    Icons.close,
+                                    color: BabyCareTheme.primaryBerry,
+                                    size: 16,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadData,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 24,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildSectionHeader(),
+                              const SizedBox(height: 16),
+                              if (parentProvider.isLoadingSitters &&
+                                  sitters.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 64),
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                )
+                              else if (parentProvider.errorMessage != null &&
+                                  sitters.isEmpty)
+                                _buildErrorState(parentProvider)
+                              else if (sitters.isEmpty)
+                                _buildEmptyState()
+                              else
+                                ...sitters.map(
+                                  (sitter) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: _buildSitterCard(
+                                      sitter,
+                                      isBookmarked: parentProvider.isSaved(
+                                        sitter.id,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 100),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: 21,
+                right: 21,
+                bottom: 16,
+                child: _buildBottomNavigation(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeader(ParentProvider parentProvider) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Row(
@@ -151,23 +505,12 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: BabyCareTheme.primaryBerry, width: 2),
-            ),
-            child: ClipOval(
-              child: Image.asset('assets/logo.png', fit: BoxFit.cover),
-            ),
-          ),
+          _buildCurrentUserAvatar(parentProvider.profile?.profilePictureUrl),
         ],
       ),
     );
   }
 
-  /// Search bar with filter button
   Widget _buildSearchBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -216,12 +559,22 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: BabyCareTheme.primaryBerry,
+                color: (_selectedLocation ?? '').trim().isEmpty
+                    ? BabyCareTheme.primaryBerry
+                    : BabyCareTheme.lightPink,
                 shape: BoxShape.circle,
+                border: (_selectedLocation ?? '').trim().isEmpty
+                    ? null
+                    : Border.all(
+                        color: BabyCareTheme.primaryBerry,
+                        width: 1.5,
+                      ),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.location_on,
-                color: BabyCareTheme.universalWhite,
+                color: (_selectedLocation ?? '').trim().isEmpty
+                    ? BabyCareTheme.universalWhite
+                    : BabyCareTheme.primaryBerry,
                 size: 24,
               ),
             ),
@@ -231,7 +584,6 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
     );
   }
 
-  /// Section header
   Widget _buildSectionHeader() {
     return Text(
       'Available Sitters',
@@ -242,10 +594,53 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
     );
   }
 
-  /// Sitter card in list
-  Widget _buildSitterCard(_SitterCard sitter) {
-    int sitterIndex = sitters.indexOf(sitter);
-    bool isBookmarked = _bookmarkedSitters.contains(sitterIndex);
+  Widget _buildErrorState(ParentProvider parentProvider) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 48),
+      child: Center(
+        child: Column(
+          children: [
+            Text(
+              parentProvider.errorMessage ?? 'Unable to load sitters.',
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _loadData,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: BabyCareTheme.primaryBerry,
+              ),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 48),
+      child: Center(
+        child: Text(
+          'No sitters match your current search.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+            color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSitterCard(
+    BabysitterProfile sitter, {
+    required bool isBookmarked,
+  }) {
+    final isBookmarkUpdating = _pendingBookmarkSitterId == sitter.id;
 
     return GestureDetector(
       onTap: () => _onSitterCardPressed(sitter),
@@ -258,52 +653,55 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
         ),
         child: Row(
           children: [
-            // Left Content
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Name
                   Text(
-                    sitter.name,
+                    sitter.fullName,
                     style: Theme.of(context).textTheme.titleSmall!.copyWith(
                       color: BabyCareTheme.darkGrey,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 6),
-
-                  // Gender
                   Text(
-                    sitter.gender,
+                    (sitter.gender ?? 'Not specified').trim().isEmpty
+                        ? 'Not specified'
+                        : sitter.gender!,
                     style: Theme.of(context).textTheme.bodySmall!.copyWith(
                       color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                     ),
                   ),
                   const SizedBox(height: 4),
-
-                  // Rate in Bold Magenta
                   Text(
-                    sitter.rate,
+                    _formatRate(sitter),
                     style: Theme.of(context).textTheme.titleSmall!.copyWith(
                       color: BabyCareTheme.primaryBerry,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 4),
-
-                  // Location on its own row
                   Text(
-                    sitter.location,
+                    _displayLocation(sitter),
                     style: Theme.of(context).textTheme.bodySmall!.copyWith(
                       color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                     ),
                   ),
+                  if ((sitter.languages).isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      sitter.languages.join(', '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                        color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-
-            // Right: Avatar with Bookmark
             Stack(
               children: [
                 Container(
@@ -317,32 +715,17 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
                     ),
                   ),
                   child: ClipOval(
-                    child: Image.asset('assets/logo.png', fit: BoxFit.cover),
+                    child: _buildProfileImage(
+                      sitter.profilePictureUrl,
+                      size: 64,
+                    ),
                   ),
                 ),
                 Positioned(
                   right: -4,
                   bottom: -4,
                   child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        if (isBookmarked) {
-                          _bookmarkedSitters.remove(sitterIndex);
-                        } else {
-                          _bookmarkedSitters.add(sitterIndex);
-                        }
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            isBookmarked
-                                ? 'Removed ${sitter.name}'
-                                : 'Saved ${sitter.name}',
-                          ),
-                          duration: const Duration(seconds: 1),
-                        ),
-                      );
-                    },
+                    onTap: () => _toggleSave(sitter),
                     child: Container(
                       width: 32,
                       height: 32,
@@ -354,15 +737,23 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
                           width: 2,
                         ),
                       ),
-                      child: Icon(
-                        isBookmarked
-                            ? Icons.bookmark_rounded
-                            : Icons.bookmark_outline,
-                        color: isBookmarked
-                            ? BabyCareTheme.primaryBerry
-                            : BabyCareTheme.primaryBerry,
-                        size: 16,
-                      ),
+                      child: isBookmarkUpdating
+                          ? const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  BabyCareTheme.primaryBerry,
+                                ),
+                              ),
+                            )
+                          : Icon(
+                              isBookmarked
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_outline,
+                              color: BabyCareTheme.primaryBerry,
+                              size: 16,
+                            ),
                     ),
                   ),
                 ),
@@ -374,14 +765,12 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
     );
   }
 
-  /// Bottom navigation bar
   Widget _buildBottomNavigation() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
       decoration: BoxDecoration(
         color: BabyCareTheme.universalWhite,
         borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
-        border: Border.all(color: BabyCareTheme.lightGrey, width: 2),
         boxShadow: [
           BoxShadow(
             color: BabyCareTheme.darkGrey.withValues(alpha: 0.12),
@@ -437,7 +826,6 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
     );
   }
 
-  /// Navigation item
   Widget _buildNavItem({
     required IconData icon,
     required String label,
@@ -472,21 +860,4 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
       ),
     );
   }
-}
-
-/// Data class for sitter card
-class _SitterCard {
-  final String name;
-  final String gender;
-  final String rate;
-  final String location;
-  final bool isVerified;
-
-  const _SitterCard({
-    required this.name,
-    required this.gender,
-    required this.rate,
-    required this.location,
-    required this.isVerified,
-  });
 }

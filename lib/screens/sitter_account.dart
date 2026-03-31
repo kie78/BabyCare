@@ -4,9 +4,7 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/babysitter_profile.dart';
 import '../providers/auth_provider.dart';
-import '../services/api_client.dart';
-import '../services/babysitter_service.dart';
-import '../services/secure_storage_service.dart';
+import '../providers/babysitter_dashboard_provider.dart';
 import 'gateway_screen.dart';
 import 'sitter_dashboard.dart';
 import 'sitter_messages.dart';
@@ -22,12 +20,6 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   late TextEditingController _ratesController;
   late TextEditingController _locationController;
   late TextEditingController _paymentController;
-  final SecureStorageService _storage = SecureStorageService();
-  late final BabysitterService _babysitterService;
-
-  BabysitterProfile? _profile;
-  bool _isLoadingProfile = true;
-  String? _profileError;
 
   final List<String> _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   late List<bool> _selectedDays;
@@ -39,13 +31,9 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     _locationController = TextEditingController();
     _paymentController = TextEditingController();
     _selectedDays = List<bool>.filled(_days.length, false);
-
-    final apiClient = ApiClient(
-      baseUrl: 'https://babycare-api-0prm.onrender.com',
-      tokenProvider: _storage.readToken,
-    );
-    _babysitterService = BabysitterService(apiClient: apiClient);
-    _loadProfile();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadProfile();
+    });
   }
 
   @override
@@ -56,77 +44,106 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     super.dispose();
   }
 
-  void _onSavePressed() {
-    if (_profile == null) {
+  Future<void> _onSavePressed() async {
+    final dashboardProvider = context.read<BabysitterDashboardProvider>();
+    final profile = dashboardProvider.profile;
+    if (profile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Load profile details before saving.')),
       );
       return;
     }
 
+    final availability = <String>[];
+    for (var index = 0; index < _days.length; index++) {
+      if (_selectedDays[index]) {
+        availability.add(_days[index]);
+      }
+    }
+
+    final success = await dashboardProvider.updateProfile(
+      location: _locationController.text.trim(),
+      rateType: (profile.rateType ?? 'hourly').trim(),
+      rateAmount: (profile.rateAmount ?? 0).toString(),
+      currency: (profile.currency ?? 'UGX').trim(),
+      paymentMethod: _paymentController.text.trim(),
+      availability: availability,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      await _handleUnauthorized(dashboardProvider.lastStatusCode);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            dashboardProvider.errorMessage ??
+                'Unable to update your profile right now.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    _syncProfileToControllers(dashboardProvider.profile);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Profile updated successfully!'),
-        duration: Duration(seconds: 2),
+      SnackBar(
+        content: Text(
+          dashboardProvider.successMessage ?? 'Profile updated successfully!',
+        ),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
 
   Future<void> _loadProfile() async {
-    setState(() {
-      _isLoadingProfile = true;
-      _profileError = null;
-    });
-
-    try {
-      final profile = await _babysitterService.getMyProfile();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _profile = profile;
-        _ratesController.text = _formatRate(profile);
-        _locationController.text = _displayOrFallback(
-          profile.location,
-          fallback: 'Location not set',
-        );
-        _paymentController.text = _displayOrFallback(
-          profile.paymentMethod,
-          fallback: 'Payment method not set',
-        );
-        _selectedDays = _mapAvailabilityDays(profile.availability);
-        _isLoadingProfile = false;
-      });
-    } on ApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      if (error.statusCode == 401 || error.statusCode == 403) {
-        await context.read<AuthProvider>().handleUnauthorized();
-        if (!mounted) {
-          return;
-        }
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const GatewayScreen()),
-          (route) => false,
-        );
-        return;
-      }
-
-      setState(() {
-        _profileError = error.message;
-        _isLoadingProfile = false;
-      });
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _profileError = 'Unable to load your profile right now.';
-        _isLoadingProfile = false;
-      });
+    final dashboardProvider = context.read<BabysitterDashboardProvider>();
+    await dashboardProvider.loadDashboard();
+    if (!mounted) {
+      return;
     }
+    await _handleUnauthorized(dashboardProvider.lastStatusCode);
+    if (!mounted) {
+      return;
+    }
+    _syncProfileToControllers(dashboardProvider.profile);
+  }
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  void _syncProfileToControllers(BabysitterProfile? profile) {
+    if (profile == null) {
+      return;
+    }
+
+    _ratesController.text = _formatRate(profile);
+    _locationController.text = _displayOrFallback(
+      profile.location,
+      fallback: 'Location not set',
+    );
+    _paymentController.text = _displayOrFallback(
+      profile.paymentMethod,
+      fallback: 'Payment method not set',
+    );
+    _selectedDays = _mapAvailabilityDays(profile.availability);
   }
 
   String _displayOrFallback(String? value, {required String fallback}) {
@@ -183,25 +200,43 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     }
   }
 
-  Widget _buildBodyContent() {
-    if (_isLoadingProfile) {
+  Widget _buildProfileImage(String? imageUrl) {
+    final normalizedUrl = (imageUrl ?? '').trim();
+
+    if (normalizedUrl.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
+    );
+  }
+
+  Widget _buildBodyContent(BabysitterDashboardProvider dashboardProvider) {
+    final profile = dashboardProvider.profile;
+
+    if (dashboardProvider.isLoading && profile == null) {
       return const Padding(
         padding: EdgeInsets.only(top: 56),
         child: Center(child: CircularProgressIndicator()),
       );
     }
 
-    if (_profileError != null) {
+    if (dashboardProvider.errorMessage != null && profile == null) {
       return Padding(
         padding: const EdgeInsets.only(top: 32),
         child: Column(
           children: [
             Text(
-              _profileError!,
+              dashboardProvider.errorMessage!,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-                color: BabyCareTheme.darkGrey,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
@@ -238,38 +273,45 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      extendBody: true,
-      body: Stack(
-        children: [
-          SafeArea(
-            child: Column(
-              children: [
-                // Header
-                _buildHeader(),
+    return Consumer<BabysitterDashboardProvider>(
+      builder: (context, dashboardProvider, _) {
+        _syncProfileToControllers(dashboardProvider.profile);
 
-                // Scrollable Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 24,
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          extendBody: true,
+          body: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    _buildHeader(),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadProfile,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 24,
+                          ),
+                          child: _buildBodyContent(dashboardProvider),
+                        ),
+                      ),
                     ),
-                    child: _buildBodyContent(),
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                left: 21,
+                right: 21,
+                bottom: 16,
+                child: _buildBottomNavigation(),
+              ),
+            ],
           ),
-          Positioned(
-            left: 21,
-            right: 21,
-            bottom: 16,
-            child: _buildBottomNavigation(),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -302,6 +344,11 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
 
   /// Avatar with camera overlay
   Widget _buildAvatarSection() {
+    final profileImageUrl = context
+        .watch<BabysitterDashboardProvider>()
+        .profile
+        ?.profilePictureUrl;
+
     return Column(
       children: [
         Stack(
@@ -316,7 +363,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 border: Border.all(color: BabyCareTheme.primaryBerry, width: 3),
               ),
               child: ClipOval(
-                child: Image.asset('assets/logo.png', fit: BoxFit.cover),
+                child: _buildProfileImage(profileImageUrl),
               ),
             ),
             // Camera Overlay
@@ -362,7 +409,10 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
         ),
         const SizedBox(height: 16),
         Text(
-          _displayOrFallback(_profile?.fullName, fallback: 'Babysitter'),
+          _displayOrFallback(
+            context.watch<BabysitterDashboardProvider>().profile?.fullName,
+            fallback: 'Babysitter',
+          ),
           style: Theme.of(context).textTheme.titleLarge!.copyWith(
             color: BabyCareTheme.primaryBerry,
             fontWeight: FontWeight.bold,
@@ -370,7 +420,10 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          _displayOrFallback(_profile?.email, fallback: 'Professional Babysitter'),
+          _displayOrFallback(
+            context.watch<BabysitterDashboardProvider>().profile?.email,
+            fallback: 'Professional Babysitter',
+          ),
           style: Theme.of(context).textTheme.bodySmall!.copyWith(
             color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
           ),
@@ -648,8 +701,12 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
 
   /// Save Changes Button
   Widget _buildSaveButton() {
+    final isSaving = context
+        .watch<BabysitterDashboardProvider>()
+        .isUpdatingProfile;
+
     return GestureDetector(
-      onTap: _onSavePressed,
+      onTap: isSaving ? null : _onSavePressed,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -664,15 +721,28 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
             ),
           ],
         ),
-        child: Text(
-          'Save Changes',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleSmall!.copyWith(
-            color: BabyCareTheme.universalWhite,
-            fontWeight: FontWeight.bold,
-            fontSize: 15,
-          ),
-        ),
+        child: isSaving
+            ? const Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      BabyCareTheme.universalWhite,
+                    ),
+                  ),
+                ),
+              )
+            : Text(
+                'Save Changes',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleSmall!.copyWith(
+                  color: BabyCareTheme.universalWhite,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
       ),
     );
   }

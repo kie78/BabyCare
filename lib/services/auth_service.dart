@@ -59,6 +59,40 @@ class AuthService {
     return _storage.clearSession();
   }
 
+  Future<Map<String, dynamic>> registerParent({
+    required String fullName,
+    required String email,
+    required String phone,
+    required String location,
+    required String occupation,
+    required String preferredHours,
+    required String password,
+  }) async {
+    final response = await _apiClient.post(
+      '/api/v1/auth/register/parent',
+      requiresAuth: false,
+      body: {
+        'full_name': fullName.trim(),
+        'email': email.trim(),
+        'phone': phone.trim(),
+        'location': location.trim(),
+        'primary_location': location.trim(),
+        'occupation': occupation.trim(),
+        'preferred_hours': preferredHours.trim(),
+        'password': password,
+      },
+    );
+
+    if (response is! Map<String, dynamic>) {
+      throw ApiException(
+        statusCode: 500,
+        message: 'Invalid parent registration response',
+      );
+    }
+
+    return response;
+  }
+
   Future<Map<String, dynamic>> registerBabysitter({
     required SitterRegistrationData data,
   }) async {

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
 import '../models/sitter_registration.dart';
+import '../providers/auth_provider.dart';
 import 'sitter_login.dart';
 
 class SitterRegistrationStep3Screen extends StatefulWidget {
@@ -19,6 +23,8 @@ class SitterRegistrationStep3Screen extends StatefulWidget {
 class _SitterRegistrationStep3ScreenState
     extends State<SitterRegistrationStep3Screen> {
   late Map<String, bool> _uploadedDocuments;
+  late Map<String, String?> _selectedFileNames;
+  String? _pickingDocumentId;
 
   final List<_DocumentUpload> documents = [
     _DocumentUpload(
@@ -56,19 +62,98 @@ class _SitterRegistrationStep3ScreenState
       'lciLetter': widget.registrationData.lciLetterPath != null,
       'resumeCv': widget.registrationData.resumeCvPath != null,
     };
+    _selectedFileNames = {
+      'profilePic': _extractFileName(widget.registrationData.profilePicturePath),
+      'nationalId': _extractFileName(widget.registrationData.nationalIdPath),
+      'lciLetter': _extractFileName(widget.registrationData.lciLetterPath),
+      'resumeCv': _extractFileName(widget.registrationData.resumeCvPath),
+    };
   }
 
-  void _simulateUpload(String docId) {
-    // Simulate file picker and upload
+  String? _extractFileName(String? path) {
+    if (path == null || path.trim().isEmpty) {
+      return null;
+    }
+
+    final normalizedPath = path.replaceAll('\\', '/');
+    final segments = normalizedPath.split('/');
+    return segments.isEmpty ? path : segments.last;
+  }
+
+  void _setDocumentPath(String docId, String path) {
+    switch (docId) {
+      case 'profilePic':
+        widget.registrationData.profilePicturePath = path;
+        break;
+      case 'nationalId':
+        widget.registrationData.nationalIdPath = path;
+        break;
+      case 'lciLetter':
+        widget.registrationData.lciLetterPath = path;
+        break;
+      case 'resumeCv':
+        widget.registrationData.resumeCvPath = path;
+        break;
+    }
+  }
+
+  Future<void> _pickDocument(String docId) async {
+    if (_pickingDocumentId != null) {
+      return;
+    }
+
+    final allowedExtensions = docId == 'profilePic'
+        ? const ['jpg', 'jpeg', 'png']
+        : const ['pdf', 'jpg', 'jpeg', 'png'];
+
     setState(() {
-      _uploadedDocuments[docId] = true;
+      _pickingDocumentId = docId;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$docId uploaded successfully'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: allowedExtensions,
+      );
+
+      if (!mounted || result == null || result.files.isEmpty) {
+        return;
+      }
+
+      final file = result.files.single;
+      final path = file.path;
+      if (path == null || path.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to access the selected file. Try again.'),
+          ),
+        );
+        return;
+      }
+
+      _setDocumentPath(docId, path);
+      setState(() {
+        _uploadedDocuments[docId] = true;
+        _selectedFileNames[docId] = file.name;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${_documentLabel(docId)} selected successfully.'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pickingDocumentId = null;
+        });
+      }
+    }
+  }
+
+  String _documentLabel(String docId) {
+    return documents.firstWhere((document) => document.id == docId).title;
   }
 
   void _onBackPressed() {
@@ -79,7 +164,7 @@ class _SitterRegistrationStep3ScreenState
     return _uploadedDocuments.values.every((uploaded) => uploaded);
   }
 
-  void _onCompletePressed() {
+  Future<void> _onCompletePressed() async {
     if (!_allDocumentsUploaded()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please upload all documents')),
@@ -87,22 +172,44 @@ class _SitterRegistrationStep3ScreenState
       return;
     }
 
-    // Save final data
-    widget.registrationData.profilePicturePath = 'uploaded';
-    widget.registrationData.nationalIdPath = 'uploaded';
-    widget.registrationData.lciLetterPath = 'uploaded';
-    widget.registrationData.resumeCvPath = 'uploaded';
+    final authProvider = context.read<AuthProvider>();
+    final success = await authProvider.registerBabysitter(
+      data: widget.registrationData,
+    );
 
-    // TODO: Submit registration to backend
-    // For now, navigate to Sitter Login
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            authProvider.errorMessage ??
+                'Registration failed. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const SitterLoginScreen()),
+      MaterialPageRoute(
+        builder: (context) => const SitterLoginScreen(
+          showPendingApprovalBanner: true,
+          successMessage:
+              'Registration submitted successfully. You can sign in after approval.',
+        ),
+      ),
       (route) => false,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final authProvider = context.watch<AuthProvider>();
+    final isSubmitting = authProvider.isLoading;
+
     return Scaffold(
       backgroundColor: BabyCareTheme.universalWhite,
       body: SafeArea(
@@ -126,7 +233,7 @@ class _SitterRegistrationStep3ScreenState
                     const SizedBox(height: 32),
 
                     // Document Upload Cards
-                    _buildDocumentCards(),
+                    _buildDocumentCards(isSubmitting: isSubmitting),
 
                     const SizedBox(height: 32),
                   ],
@@ -135,7 +242,7 @@ class _SitterRegistrationStep3ScreenState
             ),
 
             // Sticky Footer Navigation
-            _buildStickyFooter(),
+            _buildStickyFooter(isSubmitting: isSubmitting),
           ],
         ),
       ),
@@ -223,7 +330,7 @@ class _SitterRegistrationStep3ScreenState
   }
 
   /// Document upload cards
-  Widget _buildDocumentCards() {
+  Widget _buildDocumentCards({required bool isSubmitting}) {
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -232,9 +339,11 @@ class _SitterRegistrationStep3ScreenState
       itemBuilder: (context, index) {
         final doc = documents[index];
         final isUploaded = _uploadedDocuments[doc.id] ?? false;
+        final isPicking = _pickingDocumentId == doc.id;
+        final selectedFileName = _selectedFileNames[doc.id];
 
         return GestureDetector(
-          onTap: () => _simulateUpload(doc.id),
+          onTap: isSubmitting ? null : () => _pickDocument(doc.id),
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -268,7 +377,18 @@ class _SitterRegistrationStep3ScreenState
                         : BabyCareTheme.lightGrey,
                   ),
                   child: Center(
-                    child: isUploaded
+                    child: isPicking
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                BabyCareTheme.primaryBerry,
+                              ),
+                            ),
+                          )
+                        : isUploaded
                         ? const Icon(
                             Icons.check_circle,
                             color: BabyCareTheme.primaryBerry,
@@ -304,9 +424,13 @@ class _SitterRegistrationStep3ScreenState
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        isUploaded ? 'Uploaded ✓' : 'Tap to upload',
+                        isPicking
+                            ? 'Selecting file...'
+                            : isUploaded
+                            ? (selectedFileName ?? 'Uploaded ✓')
+                            : 'Tap to upload',
                         style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                          color: isUploaded
+                          color: isUploaded || isPicking
                               ? BabyCareTheme.primaryBerry
                               : BabyCareTheme.darkGrey.withValues(alpha: 0.5),
                           fontWeight: FontWeight.w600,
@@ -318,8 +442,8 @@ class _SitterRegistrationStep3ScreenState
 
                 // Upload Arrow
                 Icon(
-                  Icons.arrow_forward,
-                  color: isUploaded
+                  isPicking ? Icons.more_horiz : Icons.arrow_forward,
+                  color: isUploaded || isPicking
                       ? BabyCareTheme.primaryBerry
                       : BabyCareTheme.darkGrey.withValues(alpha: 0.5),
                   size: 20,
@@ -333,7 +457,7 @@ class _SitterRegistrationStep3ScreenState
   }
 
   /// Sticky footer navigation
-  Widget _buildStickyFooter() {
+  Widget _buildStickyFooter({required bool isSubmitting}) {
     final allUploaded = _allDocumentsUploaded();
 
     return Container(
@@ -351,7 +475,7 @@ class _SitterRegistrationStep3ScreenState
             // Back Button
             Expanded(
               child: GestureDetector(
-                onTap: _onBackPressed,
+                onTap: isSubmitting ? null : _onBackPressed,
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
@@ -391,7 +515,9 @@ class _SitterRegistrationStep3ScreenState
                   ),
                 ),
                 child: ElevatedButton(
-                  onPressed: allUploaded ? _onCompletePressed : null,
+                  onPressed: allUploaded && !isSubmitting
+                      ? _onCompletePressed
+                      : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.transparent,
                     shadowColor: Colors.transparent,
@@ -400,17 +526,29 @@ class _SitterRegistrationStep3ScreenState
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(
-                        Icons.check_circle_outline,
-                        color: BabyCareTheme.universalWhite,
-                        size: 20,
-                      ),
+                      if (isSubmitting)
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              BabyCareTheme.universalWhite,
+                            ),
+                          ),
+                        )
+                      else
+                        const Icon(
+                          Icons.check_circle_outline,
+                          color: BabyCareTheme.universalWhite,
+                          size: 20,
+                        ),
                       const SizedBox(width: 8),
                       Text(
-                        'COMPLETE',
+                        isSubmitting ? 'SUBMITTING' : 'COMPLETE',
                         style: Theme.of(context).textTheme.titleMedium!
                             .copyWith(
-                              color: allUploaded
+                              color: allUploaded || isSubmitting
                                   ? BabyCareTheme.universalWhite
                                   : BabyCareTheme.darkGrey.withValues(
                                       alpha: 0.5,

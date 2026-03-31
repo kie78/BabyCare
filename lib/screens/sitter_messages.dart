@@ -1,5 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../models/conversation.dart';
+import '../models/message.dart';
+import '../models/profile_view.dart';
+import '../providers/auth_provider.dart';
+import '../providers/babysitter_dashboard_provider.dart';
+import '../providers/conversations_provider.dart';
+import 'gateway_screen.dart';
 import 'sitter_account.dart';
 import 'sitter_dashboard.dart';
 
@@ -11,113 +22,166 @@ class SitterMessagesScreen extends StatefulWidget {
 }
 
 class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
-  final List<Conversation> conversations = [
-    Conversation(
-      id: '1',
-      name: 'Sarah M.',
-      profileImage: 'assets/logo.png',
-      lastMessage: 'Can you start on Monday?',
-      timestamp: '2 hours ago',
-      isUnread: true,
-      occupation: 'Nurse',
-    ),
-    Conversation(
-      id: '2',
-      name: 'James K.',
-      profileImage: 'assets/logo.png',
-      lastMessage: 'Thank you for the update!',
-      timestamp: '4 hours ago',
-      isUnread: true,
-      occupation: 'Engineer',
-    ),
-    Conversation(
-      id: '3',
-      name: 'Emma L.',
-      profileImage: 'assets/logo.png',
-      lastMessage: 'Looking forward to meeting you',
-      timestamp: '1 day ago',
-      isUnread: false,
-      occupation: 'Teacher',
-    ),
-    Conversation(
-      id: '4',
-      name: 'John D.',
-      profileImage: 'assets/logo.png',
-      lastMessage: 'What are your rates?',
-      timestamp: '2 days ago',
-      isUnread: false,
-      occupation: 'Doctor',
-    ),
-  ];
-
-  int _unreadCount = 0;
+  final Map<String, ProfileView> _visitorProfilesByConversation =
+      <String, ProfileView>{};
 
   @override
   void initState() {
     super.initState();
-    _updateUnreadCount();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadConversations();
+    });
   }
 
-  void _updateUnreadCount() {
-    _unreadCount = conversations.where((c) => c.isUnread).length;
+  Future<void> _loadConversations() async {
+    final conversationsProvider = context.read<ConversationsProvider>();
+    await conversationsProvider.loadConversations();
+    if (!mounted) {
+      return;
+    }
+    await _hydrateVisitorProfiles(conversationsProvider.conversations);
+    if (!mounted) {
+      return;
+    }
+    await _handleUnauthorized(conversationsProvider.lastStatusCode);
   }
 
-  void _onConversationPressed(int index) {
+  Future<void> _hydrateVisitorProfiles(List<Conversation> conversations) async {
+    final dashboardProvider = context.read<BabysitterDashboardProvider>();
+    if (dashboardProvider.profileViews.isEmpty) {
+      await dashboardProvider.loadDashboard();
+      if (!mounted) {
+        return;
+      }
+    }
+
+    final visitors = dashboardProvider.profileViews;
+    if (visitors.isEmpty) {
+      return;
+    }
+
+    final mappedProfiles = <String, ProfileView>{};
+    for (final conversation in conversations) {
+      final participantId = (conversation.participantId ?? '').trim();
+      final participantName = conversation.participantName.trim().toLowerCase();
+      final matchedVisitor = visitors.where((visitor) {
+        final visitorId = visitor.id.trim();
+        final visitorName = visitor.viewerName.trim().toLowerCase();
+        return (participantId.isNotEmpty && visitorId == participantId) ||
+            (participantName.isNotEmpty && visitorName == participantName);
+      }).cast<ProfileView?>().firstWhere(
+            (visitor) => visitor != null,
+            orElse: () => null,
+          );
+
+      if (matchedVisitor != null) {
+        mappedProfiles[conversation.id] = matchedVisitor;
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _visitorProfilesByConversation
+        ..clear()
+        ..addAll(mappedProfiles);
+    });
+  }
+
+  String? _resolveParticipantAvatar(Conversation conversation) {
+    final avatarUrl = (conversation.profileImageUrl ?? '').trim();
+    if (avatarUrl.isNotEmpty) {
+      return avatarUrl;
+    }
+
+    return _visitorProfilesByConversation[conversation.id]?.profileImageUrl;
+  }
+
+  String _displayLastMessage(Conversation conversation) {
+    final lastMessage = (conversation.lastMessage ?? '').trim();
+    return lastMessage.isEmpty ? 'No messages yet' : lastMessage;
+  }
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  void _onConversationPressed(Conversation conversation) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) =>
-            SitterChatThreadScreen(conversation: conversations[index]),
+        builder: (context) => SitterChatThreadScreen(
+          conversationId: conversation.id,
+          title: conversation.participantName,
+          subtitle:
+              (conversation.participantOccupation ??
+                      conversation.participantRole ??
+                      'Parent')
+                  .trim(),
+          avatarUrl: _resolveParticipantAvatar(conversation),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      extendBody: true,
-      body: Stack(
-        children: [
-          SafeArea(
-            child: Column(
-              children: [
-                // Fixed Header
-                _buildHeader(),
+    return Consumer<ConversationsProvider>(
+      builder: (context, conversationsProvider, _) {
+        final conversations = conversationsProvider.conversations;
+        final currentUserId = context.watch<AuthProvider>().currentUser?.id;
+        final unreadCount = conversations
+            .where((conversation) => conversation.hasUnreadFor(currentUserId))
+            .length;
 
-                // Scrollable Conversations
-                Expanded(
-                  child: conversations.isEmpty
-                      ? _buildEmptyState()
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
-                          itemCount: conversations.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (context, index) {
-                            final conversation = conversations[index];
-                            return GestureDetector(
-                              onTap: () => _onConversationPressed(index),
-                              child: _buildConversationCard(conversation),
-                            );
-                          },
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          extendBody: true,
+          body: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    _buildHeader(unreadCount),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadConversations,
+                        child: _buildConversationBody(
+                          conversationsProvider,
+                          conversations,
                         ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                left: 21,
+                right: 21,
+                bottom: 16,
+                child: _buildBottomNavigation(),
+              ),
+            ],
           ),
-          Positioned(
-            left: 21,
-            right: 21,
-            bottom: 16,
-            child: _buildBottomNavigation(),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  /// Header with title and unread count
-  Widget _buildHeader() {
+  Widget _buildHeader(int unreadCount) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Row(
@@ -130,7 +194,7 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-          if (_unreadCount > 0)
+          if (unreadCount > 0)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -138,7 +202,7 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                '$_unreadCount',
+                '$unreadCount',
                 style: Theme.of(context).textTheme.bodySmall!.copyWith(
                   color: BabyCareTheme.universalWhite,
                   fontWeight: FontWeight.bold,
@@ -150,39 +214,112 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
     );
   }
 
-  /// Empty state
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildConversationBody(
+    ConversationsProvider conversationsProvider,
+    List<Conversation> conversations,
+  ) {
+    if (conversationsProvider.isLoadingConversations && conversations.isEmpty) {
+      return ListView(
+        physics: AlwaysScrollableScrollPhysics(),
         children: [
-          Icon(
-            Icons.mark_email_read_outlined,
-            size: 64,
-            color: BabyCareTheme.primaryBerry.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No conversations yet',
-            style: Theme.of(context).textTheme.titleMedium!.copyWith(
-              color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
+          SizedBox(height: 180),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+
+    if (conversationsProvider.errorMessage != null && conversations.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 120),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                children: [
+                  Text(
+                    conversationsProvider.errorMessage!,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                      color: BabyCareTheme.darkGrey,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _loadConversations,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: BabyCareTheme.primaryBerry,
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
+      );
+    }
+
+    if (conversations.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [_buildEmptyState()],
+      );
+    }
+
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+      itemCount: conversations.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final conversation = conversations[index];
+        return GestureDetector(
+          onTap: () => _onConversationPressed(conversation),
+          child: _buildConversationCard(conversation),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 160),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.mark_email_read_outlined,
+              size: 64,
+              color: BabyCareTheme.primaryBerry.withValues(alpha: 0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No conversations yet',
+              style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  /// Conversation card
   Widget _buildConversationCard(Conversation conversation) {
+    final currentUserId = context.read<AuthProvider>().currentUser?.id;
+    final isUnread = conversation.hasUnreadFor(currentUserId);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: conversation.isUnread
+        color: isUnread
             ? BabyCareTheme.lightPink
             : BabyCareTheme.lightGrey.withValues(alpha: 0.8),
         border: Border.all(
-          color: conversation.isUnread
+          color: isUnread
               ? BabyCareTheme.primaryBerry.withValues(alpha: 0.2)
               : BabyCareTheme.lightGrey,
           width: 2,
@@ -201,16 +338,15 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                   shape: BoxShape.circle,
                   gradient: BabyCareTheme.primaryGradient,
                   border: Border.all(
-                    color: conversation.isUnread
+                    color: isUnread
                         ? BabyCareTheme.primaryBerry
                         : BabyCareTheme.lightGrey,
-                    width: conversation.isUnread ? 2 : 1,
+                    width: isUnread ? 2 : 1,
                   ),
                 ),
                 child: ClipOval(
-                  child: Image.asset(
-                    conversation.profileImage,
-                    fit: BoxFit.cover,
+                  child: _buildProfileImage(
+                    _resolveParticipantAvatar(conversation),
                   ),
                 ),
               ),
@@ -227,10 +363,10 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        conversation.name,
+                        conversation.participantName,
                         style: Theme.of(context).textTheme.titleSmall!.copyWith(
                           color: BabyCareTheme.darkGrey,
-                          fontWeight: conversation.isUnread
+                          fontWeight: isUnread
                               ? FontWeight.bold
                               : FontWeight.w600,
                         ),
@@ -239,7 +375,7 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      conversation.timestamp,
+                      _formatDateTime(conversation.updatedAt),
                       style: Theme.of(context).textTheme.bodySmall!.copyWith(
                         color: BabyCareTheme.darkGrey.withValues(alpha: 0.5),
                         fontSize: 11,
@@ -249,7 +385,7 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  conversation.occupation,
+                  (conversation.participantOccupation ?? 'Parent').trim(),
                   style: Theme.of(context).textTheme.bodySmall!.copyWith(
                     color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                     fontSize: 12,
@@ -257,10 +393,10 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  conversation.lastMessage,
+                  _displayLastMessage(conversation),
                   style: Theme.of(context).textTheme.bodySmall!.copyWith(
                     color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
-                    fontWeight: conversation.isUnread ? FontWeight.w600 : null,
+                    fontWeight: isUnread ? FontWeight.w600 : null,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -273,7 +409,41 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
     );
   }
 
-  /// Bottom navigation bar
+  Widget _buildProfileImage(String? imageUrl) {
+    final normalizedUrl = (imageUrl ?? '').trim();
+
+    if (normalizedUrl.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
+    );
+  }
+
+  String _formatDateTime(DateTime? value) {
+    if (value == null) {
+      return 'Now';
+    }
+
+    final now = DateTime.now();
+    final difference = now.difference(value);
+    if (difference.inMinutes < 1) {
+      return 'Now';
+    }
+    if (difference.inHours < 1) {
+      return '${difference.inMinutes}m ago';
+    }
+    if (difference.inDays < 1) {
+      return '${difference.inHours}h ago';
+    }
+    return '${difference.inDays}d ago';
+  }
+
   Widget _buildBottomNavigation() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
@@ -335,7 +505,6 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
     );
   }
 
-  /// Navigation item
   Widget _buildNavItem({
     required IconData icon,
     required String label,
@@ -372,109 +541,161 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
   }
 }
 
-/// Chat Thread Screen
 class SitterChatThreadScreen extends StatefulWidget {
-  final Conversation conversation;
+  const SitterChatThreadScreen({
+    super.key,
+    required this.conversationId,
+    required this.title,
+    required this.subtitle,
+    this.avatarUrl,
+  });
 
-  const SitterChatThreadScreen({super.key, required this.conversation});
+  final String conversationId;
+  final String title;
+  final String subtitle;
+  final String? avatarUrl;
 
   @override
   State<SitterChatThreadScreen> createState() => _SitterChatThreadScreenState();
 }
 
 class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
-  late TextEditingController _messageController;
-  final List<_ChatMessage> messages = [
-    _ChatMessage(
-      id: '1',
-      text: 'Hi! Are you available this week?',
-      isOutgoing: false,
-      timestamp: '2:30 PM',
-    ),
-    _ChatMessage(
-      id: '2',
-      text: 'Yes, I am available Monday to Wednesday',
-      isOutgoing: true,
-      timestamp: '2:45 PM',
-    ),
-    _ChatMessage(
-      id: '3',
-      text: 'Perfect! Can you start on Monday morning?',
-      isOutgoing: false,
-      timestamp: '2:50 PM',
-    ),
-    _ChatMessage(
-      id: '4',
-      text: 'Can you start on Monday?',
-      isOutgoing: false,
-      timestamp: '2 hours ago',
-    ),
-  ];
+  late final TextEditingController _messageController;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _messageController = TextEditingController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadMessages();
+    });
   }
 
   @override
   void dispose() {
+    context.read<ConversationsProvider>().stopPolling(
+      conversationId: widget.conversationId,
+    );
     _messageController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  void _onSendPressed() {
-    if (_messageController.text.isEmpty) return;
+  Future<void> _loadMessages() async {
+    final conversationsProvider = context.read<ConversationsProvider>();
+    await conversationsProvider.openConversation(widget.conversationId);
+    conversationsProvider.startPolling(widget.conversationId);
+    if (!mounted) {
+      return;
+    }
+    await _handleUnauthorized(conversationsProvider.lastStatusCode);
+    if (!mounted) {
+      return;
+    }
+    _jumpToLatest();
+  }
 
-    setState(() {
-      messages.add(
-        _ChatMessage(
-          id: '${messages.length + 1}',
-          text: _messageController.text,
-          isOutgoing: true,
-          timestamp: 'Now',
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _onSendPressed() async {
+    final content = _messageController.text.trim();
+    if (content.isEmpty) {
+      return;
+    }
+
+    final conversationsProvider = context.read<ConversationsProvider>();
+    final success = await conversationsProvider.sendMessage(
+      conversationId: widget.conversationId,
+      content: content,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!success) {
+      await _handleUnauthorized(conversationsProvider.lastStatusCode);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            conversationsProvider.errorMessage ??
+                'Unable to send your message right now.',
+          ),
         ),
       );
-      _messageController.clear();
+      return;
+    }
+
+    _messageController.clear();
+    unawaited(_loadMessages());
+  }
+
+  void _jumpToLatest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) {
+        return;
+      }
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: BabyCareTheme.universalWhite,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(),
+    final currentUserId = context.watch<AuthProvider>().currentUser?.id;
 
-            // Messages
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+    return Consumer<ConversationsProvider>(
+      builder: (context, conversationsProvider, _) {
+        final messages = conversationsProvider.activeMessages;
+        final conversation = conversationsProvider.conversationById(
+          widget.conversationId,
+        );
+        final headerAvatarUrl =
+            (conversation?.profileImageUrl ?? '').trim().isNotEmpty
+            ? conversation?.profileImageUrl
+            : widget.avatarUrl;
+        _jumpToLatest();
+
+        return Scaffold(
+          backgroundColor: BabyCareTheme.universalWhite,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(headerAvatarUrl),
+                Expanded(
+                  child: _buildMessagesBody(
+                    conversationsProvider,
+                    messages,
+                    currentUserId,
+                  ),
                 ),
-                itemCount: messages.length,
-                reverse: true,
-                itemBuilder: (context, index) {
-                  final message = messages[messages.length - 1 - index];
-                  return _buildMessageBubble(message);
-                },
-              ),
+                _buildInputArea(conversationsProvider.isSendingMessage),
+              ],
             ),
-
-            // Message Input
-            _buildInputArea(),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  /// Header with conversation info
-  Widget _buildHeader() {
+  Widget _buildHeader(String? avatarUrl) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -494,19 +715,31 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
             ),
           ),
           const SizedBox(width: 12),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: BabyCareTheme.primaryGradient,
+            ),
+            child: ClipOval(
+              child: _buildProfileImage(avatarUrl),
+            ),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.conversation.name,
+                  widget.title,
                   style: Theme.of(context).textTheme.titleSmall!.copyWith(
                     color: BabyCareTheme.darkGrey,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 Text(
-                  widget.conversation.occupation,
+                  widget.subtitle,
                   style: Theme.of(context).textTheme.bodySmall!.copyWith(
                     color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
                   ),
@@ -514,102 +747,159 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
               ],
             ),
           ),
-          Icon(
-            Icons.call_outlined,
-            color: BabyCareTheme.primaryBerry,
-            size: 20,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileImage(String? imageUrl) {
+    final normalizedUrl = (imageUrl ?? '').trim();
+
+    if (normalizedUrl.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
+    );
+  }
+
+  Widget _buildMessagesBody(
+    ConversationsProvider conversationsProvider,
+    List<Message> messages,
+    String? currentUserId,
+  ) {
+    if (conversationsProvider.isLoadingMessages && messages.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (conversationsProvider.errorMessage != null && messages.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                conversationsProvider.errorMessage!,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium!.copyWith(color: BabyCareTheme.darkGrey),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadMessages,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: BabyCareTheme.primaryBerry,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (messages.isEmpty) {
+      return Center(
+        child: Text(
+          'No messages yet. Start the conversation here.',
+          style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+            color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        final message = messages[index];
+        return _buildMessageBubble(
+          message: message,
+          isOutgoing:
+              currentUserId != null && message.senderId == currentUserId,
+        );
+      },
+    );
+  }
+
+  Widget _buildMessageBubble({
+    required Message message,
+    required bool isOutgoing,
+  }) {
+    final bubble = Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: isOutgoing ? null : BabyCareTheme.lightGrey,
+        gradient: isOutgoing ? BabyCareTheme.primaryGradient : null,
+        borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
+      ),
+      child: Text(
+        message.content,
+        style: Theme.of(context).textTheme.bodySmall!.copyWith(
+          color: isOutgoing
+              ? BabyCareTheme.universalWhite
+              : BabyCareTheme.darkGrey,
+        ),
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: isOutgoing
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        children: [
+          Flexible(
+            child: Column(
+              crossAxisAlignment: isOutgoing
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                bubble,
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    _formatMessageTime(message.createdAt),
+                    style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                      color: BabyCareTheme.darkGrey.withValues(alpha: 0.5),
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// Message bubble
-  Widget _buildMessageBubble(_ChatMessage message) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: message.isOutgoing
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
-          if (!message.isOutgoing)
-            Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: BabyCareTheme.lightGrey,
-                  borderRadius: BorderRadius.circular(
-                    BabyCareTheme.radiusLarge,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      message.text,
-                      style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                        color: BabyCareTheme.darkGrey,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      message.timestamp,
-                      style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                        color: BabyCareTheme.darkGrey.withValues(alpha: 0.5),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (message.isOutgoing)
-            Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  gradient: BabyCareTheme.primaryGradient,
-                  borderRadius: BorderRadius.circular(
-                    BabyCareTheme.radiusLarge,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      message.text,
-                      style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                        color: BabyCareTheme.universalWhite,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      message.timestamp,
-                      style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                        color: BabyCareTheme.universalWhite.withValues(
-                          alpha: 0.7,
-                        ),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
+  String _formatMessageTime(DateTime? createdAt) {
+    if (createdAt == null) {
+      return 'Now';
+    }
+
+    final localTime = createdAt.isUtc ? createdAt.toLocal() : createdAt;
+    final hour = localTime.hour.toString().padLeft(2, '0');
+    final minute = localTime.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
-  /// Input area
-  Widget _buildInputArea() {
+  Widget _buildInputArea(bool isSendingMessage) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -658,7 +948,7 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
             ),
             const SizedBox(width: 12),
             GestureDetector(
-              onTap: _onSendPressed,
+              onTap: isSendingMessage ? null : _onSendPressed,
               child: Container(
                 width: 44,
                 height: 44,
@@ -666,11 +956,21 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
                   gradient: BabyCareTheme.primaryGradient,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.send,
-                  color: BabyCareTheme.universalWhite,
-                  size: 20,
-                ),
+                child: isSendingMessage
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            BabyCareTheme.universalWhite,
+                          ),
+                        ),
+                      )
+                    : const Icon(
+                        Icons.send,
+                        color: BabyCareTheme.universalWhite,
+                        size: 20,
+                      ),
               ),
             ),
           ],
@@ -678,40 +978,4 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
       ),
     );
   }
-}
-
-/// Conversation data model
-class Conversation {
-  final String id;
-  final String name;
-  final String profileImage;
-  final String lastMessage;
-  final String timestamp;
-  final bool isUnread;
-  final String occupation;
-
-  Conversation({
-    required this.id,
-    required this.name,
-    required this.profileImage,
-    required this.lastMessage,
-    required this.timestamp,
-    required this.isUnread,
-    required this.occupation,
-  });
-}
-
-/// Chat message data model
-class _ChatMessage {
-  final String id;
-  final String text;
-  final bool isOutgoing;
-  final String timestamp;
-
-  _ChatMessage({
-    required this.id,
-    required this.text,
-    required this.isOutgoing,
-    required this.timestamp,
-  });
 }

@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../config/theme.dart';
+import '../providers/auth_provider.dart';
+import '../providers/conversations_provider.dart';
+import 'gateway_screen.dart';
+import 'sitter_messages.dart';
 
 class ParentProfileSitterViewScreen extends StatefulWidget {
+  final String? parentId;
   final String parentName;
   final String profileImage;
   final String location;
@@ -11,6 +18,7 @@ class ParentProfileSitterViewScreen extends StatefulWidget {
 
   const ParentProfileSitterViewScreen({
     super.key,
+    this.parentId,
     this.parentName = 'Sarah Namukasa',
     this.profileImage = 'assets/logo.png',
     this.location = 'Kansanga',
@@ -26,20 +34,104 @@ class ParentProfileSitterViewScreen extends StatefulWidget {
 
 class _ParentProfileSitterViewScreenState
     extends State<ParentProfileSitterViewScreen> {
-  void _onContinueChat() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Opening chat with parent...'),
-        duration: Duration(seconds: 1),
+  bool _isOpeningChat = false;
+
+  Future<void> _handleUnauthorized(int? statusCode) async {
+    if (statusCode != 401 && statusCode != 403) {
+      return;
+    }
+
+    await context.read<AuthProvider>().handleUnauthorized();
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _onContinueChat() async {
+    if (_isOpeningChat) {
+      return;
+    }
+
+    setState(() {
+      _isOpeningChat = true;
+    });
+
+    final conversationsProvider = context.read<ConversationsProvider>();
+    await conversationsProvider.loadConversations();
+
+    if (!mounted) {
+      return;
+    }
+
+    await _handleUnauthorized(conversationsProvider.lastStatusCode);
+    if (!mounted) {
+      return;
+    }
+
+    final normalizedName = widget.parentName.trim().toLowerCase();
+    final conversation = conversationsProvider.conversations
+        .where(
+          (item) =>
+              (widget.parentId != null &&
+                  widget.parentId!.isNotEmpty &&
+                  item.participantId == widget.parentId) ||
+              item.participantName.trim().toLowerCase() == normalizedName,
+        )
+        .cast()
+        .firstOrNull;
+
+    if (conversation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No existing chat with this parent yet. Parents need to start the conversation first.',
+          ),
+        ),
+      );
+      setState(() {
+        _isOpeningChat = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isOpeningChat = false;
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => SitterChatThreadScreen(
+          conversationId: conversation.id,
+          title: conversation.participantName,
+          subtitle:
+              (conversation.participantOccupation ?? conversation.participantRole ?? 'Parent')
+                  .trim(),
+        ),
       ),
     );
   }
 
   void _onPhoneCall() {
+    final phoneNumber = widget.phoneNumber.trim();
+    if (phoneNumber.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This parent has not shared a phone number.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Calling parent...'),
-        duration: Duration(seconds: 1),
+      SnackBar(
+        content: Text('Phone number: $phoneNumber'),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -115,6 +207,8 @@ class _ParentProfileSitterViewScreenState
 
   /// Profile Identity Section with avatar and name
   Widget _buildProfileSection() {
+    final imageSource = widget.profileImage.trim();
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Column(
@@ -129,7 +223,7 @@ class _ParentProfileSitterViewScreenState
               border: Border.all(color: BabyCareTheme.primaryBerry, width: 4),
             ),
             child: ClipOval(
-              child: Image.asset(widget.profileImage, fit: BoxFit.cover),
+              child: _buildProfileImage(imageSource),
             ),
           ),
           const SizedBox(height: 16),
@@ -143,6 +237,31 @@ class _ParentProfileSitterViewScreenState
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildProfileImage(String imageSource) {
+    if (imageSource.isEmpty) {
+      return Image.asset('assets/logo.png', fit: BoxFit.cover);
+    }
+
+    if (imageSource.startsWith('http://') ||
+        imageSource.startsWith('https://')) {
+      return Image.network(
+        imageSource,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Image.asset('assets/logo.png', fit: BoxFit.cover);
+        },
+      );
+    }
+
+    return Image.asset(
+      imageSource,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.asset('assets/logo.png', fit: BoxFit.cover);
+      },
     );
   }
 
@@ -258,7 +377,9 @@ class _ParentProfileSitterViewScreenState
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    widget.phoneNumber,
+                    widget.phoneNumber.trim().isEmpty
+                        ? 'Not provided'
+                        : widget.phoneNumber,
                     style: Theme.of(context).textTheme.titleSmall!.copyWith(
                       color: BabyCareTheme.darkGrey,
                       fontWeight: FontWeight.bold,
@@ -314,14 +435,26 @@ class _ParentProfileSitterViewScreenState
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.chat_bubble_outline,
-                color: BabyCareTheme.universalWhite,
-                size: 20,
-              ),
+              if (_isOpeningChat)
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      BabyCareTheme.universalWhite,
+                    ),
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.chat_bubble_outline,
+                  color: BabyCareTheme.universalWhite,
+                  size: 20,
+                ),
               const SizedBox(width: 8),
               Text(
-                'Continue Chat',
+                _isOpeningChat ? 'Opening...' : 'Continue Chat',
                 style: Theme.of(context).textTheme.titleSmall!.copyWith(
                   color: BabyCareTheme.universalWhite,
                   fontWeight: FontWeight.bold,
