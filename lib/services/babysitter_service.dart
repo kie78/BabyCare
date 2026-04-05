@@ -98,7 +98,10 @@ class BabysitterService {
     required String currency,
     required String paymentMethod,
     required List<String> availability,
+    String? profilePicturePath,
   }) async {
+    final normalizedImagePath = (profilePicturePath ?? '').trim();
+
     await _apiClient.putMultipart(
       '/api/v1/babysitters/profile',
       fields: <String, String>{
@@ -109,6 +112,9 @@ class BabysitterService {
         'payment_method': paymentMethod,
         'availability': availability.join(','),
       },
+      files: normalizedImagePath.isEmpty
+          ? const <String, String>{}
+          : <String, String>{'profile_picture': normalizedImagePath},
     );
   }
 }

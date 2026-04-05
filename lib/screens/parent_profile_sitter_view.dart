@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversations_provider.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'sitter_messages.dart';
 
@@ -86,12 +87,9 @@ class _ParentProfileSitterViewScreenState
         .firstOrNull;
 
     if (conversation == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No existing chat with this parent yet. Parents need to start the conversation first.',
-          ),
-        ),
+      AppToast.showInfo(
+        context,
+        'No existing chat with this parent yet. Parents need to start the conversation first.',
       );
       setState(() {
         _isOpeningChat = false;
@@ -119,21 +117,11 @@ class _ParentProfileSitterViewScreenState
   void _onPhoneCall() {
     final phoneNumber = widget.phoneNumber.trim();
     if (phoneNumber.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This parent has not shared a phone number.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      AppToast.showInfo(context, 'This parent has not shared a phone number.');
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Phone number: $phoneNumber'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    AppToast.showInfo(context, 'Phone number: $phoneNumber');
   }
 
   @override

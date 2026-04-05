@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,6 +8,8 @@ import '../config/theme.dart';
 import '../models/babysitter_profile.dart';
 import '../providers/auth_provider.dart';
 import '../providers/babysitter_dashboard_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'sitter_dashboard.dart';
 import 'sitter_messages.dart';
@@ -20,9 +25,15 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   late TextEditingController _ratesController;
   late TextEditingController _locationController;
   late TextEditingController _paymentController;
+  late FocusNode _ratesFocusNode;
+  late FocusNode _locationFocusNode;
+  late FocusNode _paymentFocusNode;
 
   final List<String> _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   late List<bool> _selectedDays;
+  BabysitterProfile? _initialProfile;
+  String? _selectedProfileImagePath;
+  bool _hasChanges = false;
 
   @override
   void initState() {
@@ -30,7 +41,13 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     _ratesController = TextEditingController();
     _locationController = TextEditingController();
     _paymentController = TextEditingController();
+    _ratesFocusNode = FocusNode();
+    _locationFocusNode = FocusNode();
+    _paymentFocusNode = FocusNode();
     _selectedDays = List<bool>.filled(_days.length, false);
+    _ratesController.addListener(_updateHasChanges);
+    _locationController.addListener(_updateHasChanges);
+    _paymentController.addListener(_updateHasChanges);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadProfile();
     });
@@ -41,16 +58,140 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     _ratesController.dispose();
     _locationController.dispose();
     _paymentController.dispose();
+    _ratesFocusNode.dispose();
+    _locationFocusNode.dispose();
+    _paymentFocusNode.dispose();
     super.dispose();
+  }
+
+  String _normalizeValue(String? value) {
+    return (value ?? '').trim();
+  }
+
+  String _serializeAvailability(List<bool> selectedDays) {
+    final selected = <String>[];
+    for (var index = 0; index < _days.length; index++) {
+      if (selectedDays[index]) {
+        selected.add(_days[index]);
+      }
+    }
+    return selected.join(',');
+  }
+
+  void _updateHasChanges() {
+    final initialProfile = _initialProfile;
+    if (initialProfile == null) {
+      if (_hasChanges) {
+        setState(() {
+          _hasChanges = false;
+        });
+      }
+      return;
+    }
+
+    final fieldsChanged =
+        _normalizeValue(_ratesController.text) != _formatEditableRate(initialProfile) ||
+        _normalizeValue(_locationController.text) !=
+            _normalizeValue(initialProfile.location) ||
+        _normalizeValue(_paymentController.text) !=
+            _normalizeValue(initialProfile.paymentMethod) ||
+        _serializeAvailability(_selectedDays) !=
+            _serializeAvailability(_mapAvailabilityDays(initialProfile.availability));
+
+    final imageChanged = _normalizeValue(_selectedProfileImagePath).isNotEmpty;
+    final nextHasChanges = fieldsChanged || imageChanged;
+    if (nextHasChanges == _hasChanges) {
+      return;
+    }
+
+    setState(() {
+      _hasChanges = nextHasChanges;
+    });
+  }
+
+  void _focusField(FocusNode focusNode, TextEditingController controller) {
+    focusNode.requestFocus();
+    controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: controller.text.length),
+    );
+  }
+
+  Future<void> _pickProfileImage() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+    );
+
+    if (!mounted || result == null || result.files.isEmpty) {
+      return;
+    }
+
+    final file = result.files.single;
+    final path = file.path;
+    if (path == null || path.trim().isEmpty) {
+      AppToast.showError(context, 'Unable to access the selected image. Try again.');
+      return;
+    }
+
+    setState(() {
+      _selectedProfileImagePath = path;
+    });
+    _updateHasChanges();
+
+    AppToast.showSuccess(context, '${file.name} selected successfully.');
+  }
+
+  ({String rateAmount, String currency, String rateType}) _parseRateInput(
+    String input,
+    BabysitterProfile profile,
+  ) {
+    final trimmed = input.trim();
+    final fallbackCurrency = _normalizeValue(profile.currency).isEmpty
+        ? 'UGX'
+        : _normalizeValue(profile.currency);
+    final fallbackRateType = _normalizeValue(profile.rateType).isEmpty
+        ? 'hourly'
+        : _normalizeValue(profile.rateType);
+    final fallbackRateAmount = profile.rateAmount == null
+        ? ''
+        : (profile.rateAmount! % 1 == 0
+              ? profile.rateAmount!.toInt().toString()
+              : profile.rateAmount!.toStringAsFixed(2));
+
+    if (trimmed.isEmpty) {
+      return (
+        rateAmount: fallbackRateAmount,
+        currency: fallbackCurrency,
+        rateType: fallbackRateType,
+      );
+    }
+
+    final amountMatch = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(trimmed);
+    final rateAmount = amountMatch?.group(1) ?? fallbackRateAmount;
+
+    String currency = fallbackCurrency;
+    final currencyMatch = RegExp(r'\b([A-Za-z]{3})\b').firstMatch(trimmed);
+    if (currencyMatch != null) {
+      currency = currencyMatch.group(1)!.toUpperCase();
+    }
+
+    String rateType = fallbackRateType;
+    final rateTypeMatch = RegExp(
+      r'(hourly|daily|weekly|monthly)',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    if (rateTypeMatch != null) {
+      rateType = rateTypeMatch.group(1)!.toLowerCase();
+    }
+
+    return (rateAmount: rateAmount, currency: currency, rateType: rateType);
   }
 
   Future<void> _onSavePressed() async {
     final dashboardProvider = context.read<BabysitterDashboardProvider>();
-    final profile = dashboardProvider.profile;
+    final profile = dashboardProvider.profile ?? _initialProfile;
     if (profile == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Load profile details before saving.')),
-      );
+      AppToast.showInfo(context, 'Load profile details before saving.');
       return;
     }
 
@@ -60,14 +201,18 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
         availability.add(_days[index]);
       }
     }
+    final rateInput = _parseRateInput(_ratesController.text, profile);
+    final selectedImagePath = _normalizeValue(_selectedProfileImagePath);
+    final hasAvatarChange = selectedImagePath.isNotEmpty;
 
     final success = await dashboardProvider.updateProfile(
       location: _locationController.text.trim(),
-      rateType: (profile.rateType ?? 'hourly').trim(),
-      rateAmount: (profile.rateAmount ?? 0).toString(),
-      currency: (profile.currency ?? 'UGX').trim(),
+      rateType: rateInput.rateType,
+      rateAmount: rateInput.rateAmount,
+      currency: rateInput.currency,
       paymentMethod: _paymentController.text.trim(),
       availability: availability,
+      profilePicturePath: hasAvatarChange ? selectedImagePath : null,
     );
 
     if (!mounted) {
@@ -79,25 +224,21 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            dashboardProvider.errorMessage ??
-                'Unable to update your profile right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        dashboardProvider.errorMessage ?? 'Unable to update your profile right now.',
+        statusCode: dashboardProvider.lastStatusCode,
+        fallbackMessage: 'Unable to update your profile right now.',
       );
       return;
     }
 
     _syncProfileToControllers(dashboardProvider.profile);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          dashboardProvider.successMessage ?? 'Profile updated successfully!',
-        ),
-        duration: const Duration(seconds: 2),
-      ),
+    AppToast.showSuccess(
+      context,
+      hasAvatarChange
+          ? 'Profile and avatar updated successfully.'
+          : (dashboardProvider.successMessage ?? 'Profile updated successfully!'),
     );
   }
 
@@ -134,16 +275,13 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
       return;
     }
 
-    _ratesController.text = _formatRate(profile);
-    _locationController.text = _displayOrFallback(
-      profile.location,
-      fallback: 'Location not set',
-    );
-    _paymentController.text = _displayOrFallback(
-      profile.paymentMethod,
-      fallback: 'Payment method not set',
-    );
+    _initialProfile = profile;
+    _ratesController.text = _formatEditableRate(profile);
+    _locationController.text = _normalizeValue(profile.location);
+    _paymentController.text = _normalizeValue(profile.paymentMethod);
     _selectedDays = _mapAvailabilityDays(profile.availability);
+    _selectedProfileImagePath = null;
+    _updateHasChanges();
   }
 
   String _displayOrFallback(String? value, {required String fallback}) {
@@ -151,18 +289,21 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     return trimmed.isEmpty ? fallback : trimmed;
   }
 
-  String _formatRate(BabysitterProfile profile) {
+  String _formatEditableRate(BabysitterProfile profile) {
     final amount = profile.rateAmount;
-    final currency = _displayOrFallback(profile.currency, fallback: 'UGX');
-    final rateType = _displayOrFallback(profile.rateType, fallback: 'hourly');
-
     if (amount == null) {
-      return 'Rate not set';
+      return '';
     }
 
     final amountText = amount % 1 == 0
         ? amount.toInt().toString()
         : amount.toStringAsFixed(2);
+    final currency = _normalizeValue(profile.currency).isEmpty
+        ? 'UGX'
+        : _normalizeValue(profile.currency);
+    final rateType = _normalizeValue(profile.rateType).isEmpty
+        ? 'hourly'
+        : _normalizeValue(profile.rateType);
     return '$amountText $currency/$rateType';
   }
 
@@ -216,14 +357,22 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     );
   }
 
+  Widget _buildCurrentProfileImage() {
+    final localImagePath = _normalizeValue(_selectedProfileImagePath);
+    final remoteImageUrl = _normalizeValue(_initialProfile?.profilePictureUrl);
+
+    if (localImagePath.isNotEmpty) {
+      return Image.file(File(localImagePath), fit: BoxFit.cover);
+    }
+
+    return _buildProfileImage(remoteImageUrl);
+  }
+
   Widget _buildBodyContent(BabysitterDashboardProvider dashboardProvider) {
     final profile = dashboardProvider.profile;
 
     if (dashboardProvider.isLoading && profile == null) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 56),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return _buildProfileSkeleton();
     }
 
     if (dashboardProvider.errorMessage != null && profile == null) {
@@ -261,12 +410,54 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
           title: 'Preferred Payment Method',
           controller: _paymentController,
           icon: Icons.edit_outlined,
+          focusNode: _paymentFocusNode,
         ),
-        const SizedBox(height: 32),
-        _buildSaveButton(),
+        if (_hasChanges) ...[
+          const SizedBox(height: 32),
+          _buildSaveButton(),
+        ],
         const SizedBox(height: 16),
         _buildLogoutButton(),
         const SizedBox(height: 100),
+      ],
+    );
+  }
+
+  Widget _buildProfileSkeleton() {
+    return Column(
+      children: [
+        const AppSkeletonCircle(size: 120),
+        const SizedBox(height: 16),
+        const AppSkeletonBlock(width: 160, height: 16),
+        const SizedBox(height: 8),
+        const AppSkeletonBlock(width: 190, height: 12),
+        const SizedBox(height: 32),
+        AppSkeletonCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  AppSkeletonBlock(width: 120, height: 14),
+                  AppSkeletonBlock(width: 20, height: 20),
+                ],
+              ),
+              SizedBox(height: 16),
+              AppSkeletonBlock(width: 110, height: 12),
+              SizedBox(height: 10),
+              AppSkeletonBlock(width: double.infinity, height: 44),
+              SizedBox(height: 16),
+              AppSkeletonBlock(width: 80, height: 12),
+              SizedBox(height: 10),
+              AppSkeletonBlock(width: double.infinity, height: 44),
+              SizedBox(height: 16),
+              AppSkeletonBlock(width: 95, height: 12),
+              SizedBox(height: 10),
+              AppSkeletonBlock(width: double.infinity, height: 44),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -275,8 +466,6 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   Widget build(BuildContext context) {
     return Consumer<BabysitterDashboardProvider>(
       builder: (context, dashboardProvider, _) {
-        _syncProfileToControllers(dashboardProvider.profile);
-
         return Scaffold(
           backgroundColor: BabyCareTheme.universalWhite,
           extendBody: true,
@@ -344,26 +533,24 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
 
   /// Avatar with camera overlay
   Widget _buildAvatarSection() {
-    final profileImageUrl = context
-        .watch<BabysitterDashboardProvider>()
-        .profile
-        ?.profilePictureUrl;
-
     return Column(
       children: [
         Stack(
           children: [
             // Avatar Container
-            Container(
-              width: 120,
-              height: 120,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: BabyCareTheme.primaryGradient,
-                border: Border.all(color: BabyCareTheme.primaryBerry, width: 3),
-              ),
-              child: ClipOval(
-                child: _buildProfileImage(profileImageUrl),
+            GestureDetector(
+              onTap: _pickProfileImage,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: BabyCareTheme.primaryGradient,
+                  border: Border.all(color: BabyCareTheme.primaryBerry, width: 3),
+                ),
+                child: ClipOval(
+                  child: _buildCurrentProfileImage(),
+                ),
               ),
             ),
             // Camera Overlay
@@ -371,14 +558,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
               right: 0,
               bottom: 0,
               child: GestureDetector(
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Camera feature not yet implemented'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
-                },
+                onTap: _pickProfileImage,
                 child: Container(
                   width: 44,
                   height: 44,
@@ -437,6 +617,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     required String title,
     required TextEditingController controller,
     required IconData icon,
+    required FocusNode focusNode,
   }) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -460,14 +641,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 ),
               ),
               GestureDetector(
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Edit $title'),
-                      duration: const Duration(seconds: 1),
-                    ),
-                  );
-                },
+                onTap: () => _focusField(focusNode, controller),
                 child: Icon(icon, color: BabyCareTheme.primaryBerry, size: 20),
               ),
             ],
@@ -483,7 +657,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
             ),
             child: TextField(
               controller: controller,
-              enabled: false,
+              focusNode: focusNode,
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
@@ -523,14 +697,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 ),
               ),
               GestureDetector(
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Edit Work Preferences'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
-                },
+                onTap: () => _focusField(_ratesFocusNode, _ratesController),
                 child: Icon(
                   Icons.edit_outlined,
                   color: BabyCareTheme.primaryBerry,
@@ -568,16 +735,26 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 runSpacing: 8,
                 children: List.generate(
                   _days.length,
-                  (index) => _selectedDays[index]
-                      ? Container(
+                  (index) => GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedDays[index] = !_selectedDays[index];
+                          });
+                          _updateHasChanges();
+                        },
+                        child: Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: BabyCareTheme.primaryBerry,
+                            color: _selectedDays[index]
+                                ? BabyCareTheme.primaryBerry
+                                : BabyCareTheme.universalWhite,
                             border: Border.all(
-                              color: BabyCareTheme.primaryBerry,
+                              color: _selectedDays[index]
+                                  ? BabyCareTheme.primaryBerry
+                                  : BabyCareTheme.lightGrey,
                               width: 1.5,
                             ),
                             borderRadius: BorderRadius.circular(20),
@@ -586,12 +763,14 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                             _days[index],
                             style: Theme.of(context).textTheme.bodySmall!
                                 .copyWith(
-                                  color: BabyCareTheme.universalWhite,
+                                  color: _selectedDays[index]
+                                      ? BabyCareTheme.universalWhite
+                                      : BabyCareTheme.darkGrey,
                                   fontWeight: FontWeight.w600,
                                 ),
                           ),
-                        )
-                      : const SizedBox.shrink(),
+                        ),
+                      ),
                 ),
               ),
             ],
@@ -632,7 +811,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 ),
                 child: TextField(
                   controller: _ratesController,
-                  enabled: false,
+                  focusNode: _ratesFocusNode,
                   decoration: const InputDecoration(
                     border: InputBorder.none,
                     isDense: true,
@@ -681,11 +860,12 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 ),
                 child: TextField(
                   controller: _locationController,
-                  enabled: false,
+                  focusNode: _locationFocusNode,
                   decoration: const InputDecoration(
                     border: InputBorder.none,
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
+                    hintText: 'Enter your work location',
                   ),
                   style: Theme.of(context).textTheme.bodySmall!.copyWith(
                     color: BabyCareTheme.darkGrey,

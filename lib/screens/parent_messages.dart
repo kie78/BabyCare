@@ -11,6 +11,8 @@ import '../models/message.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversations_provider.dart';
 import '../providers/parent_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'parent_account.dart';
 import 'parent_discover.dart';
@@ -25,6 +27,7 @@ class ParentMessagesScreen extends StatefulWidget {
 class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
   final Map<String, BabysitterProfile> _contactProfiles =
       <String, BabysitterProfile>{};
+  String? _openingConversationId;
 
   @override
   void initState() {
@@ -35,6 +38,14 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
   }
 
   Future<void> _loadConversations() async {
+    final parentProvider = context.read<ParentProvider>();
+    if (parentProvider.sitters.isEmpty) {
+      await parentProvider.loadSitters();
+      if (!mounted) {
+        return;
+      }
+    }
+
     final conversationsProvider = context.read<ConversationsProvider>();
     await conversationsProvider.loadConversations();
     if (!mounted) {
@@ -59,21 +70,37 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
     final parentProvider = context.read<ParentProvider>();
     final updatedProfiles = Map<String, BabysitterProfile>.from(_contactProfiles);
 
-    for (final conversation in conversations) {
-      final participantId = (conversation.participantId ?? '').trim();
-      final needsMetadata = _isPlaceholderValue(conversation.participantName) ||
-          (conversation.profileImageUrl ?? '').trim().isEmpty ||
-          (conversation.participantPhone ?? '').trim().isEmpty;
+    await Future.wait(
+      conversations.map((conversation) async {
+        final participantName = _resolveParticipantName(conversation);
+        final participantId = (conversation.participantId ?? '').trim();
+        final needsMetadata =
+            _isPlaceholderValue(conversation.participantName) ||
+            (conversation.profileImageUrl ?? '').trim().isEmpty ||
+            (conversation.participantPhone ?? '').trim().isEmpty;
 
-      if (!needsMetadata || participantId.isEmpty) {
-        continue;
-      }
+        if (!needsMetadata) {
+          return;
+        }
 
-      final profile = await parentProvider.fetchBabysitterById(participantId);
-      if (profile != null) {
-        updatedProfiles[conversation.id] = profile;
-      }
-    }
+        final cachedByName = parentProvider.cachedBabysitterByName(
+          participantName,
+        );
+        if (cachedByName != null) {
+          updatedProfiles[conversation.id] = cachedByName;
+          return;
+        }
+
+        if (participantId.isEmpty) {
+          return;
+        }
+
+        final profile = await parentProvider.fetchBabysitterById(participantId);
+        if (profile != null) {
+          updatedProfiles[conversation.id] = profile;
+        }
+      }),
+    );
 
     if (!mounted) {
       return;
@@ -149,8 +176,70 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
     );
   }
 
-  void _onConversationPressed(Conversation conversation) {
-    final participantProfile = _contactProfiles[conversation.id];
+  Future<BabysitterProfile?> _ensureParticipantProfile(
+    Conversation conversation,
+  ) async {
+    final existingProfile = _contactProfiles[conversation.id];
+    if (existingProfile != null) {
+      return existingProfile;
+    }
+
+    final parentProvider = context.read<ParentProvider>();
+    final participantName = _resolveParticipantName(conversation);
+    final cachedByName = parentProvider.cachedBabysitterByName(participantName);
+    if (cachedByName != null) {
+      if (!mounted) {
+        return cachedByName;
+      }
+      setState(() {
+        _contactProfiles[conversation.id] = cachedByName;
+      });
+      return cachedByName;
+    }
+
+    final participantId = (conversation.participantId ?? '').trim();
+    if (participantId.isEmpty) {
+      return null;
+    }
+
+    final cachedProfile = parentProvider.cachedBabysitter(participantId);
+    if (cachedProfile != null) {
+      if (!mounted) {
+        return cachedProfile;
+      }
+      setState(() {
+        _contactProfiles[conversation.id] = cachedProfile;
+      });
+      return cachedProfile;
+    }
+
+    final fetchedProfile = await parentProvider.fetchBabysitterById(participantId);
+    if (fetchedProfile != null && mounted) {
+      setState(() {
+        _contactProfiles[conversation.id] = fetchedProfile;
+      });
+    }
+    return fetchedProfile;
+  }
+
+  Future<void> _onConversationPressed(Conversation conversation) async {
+    if (_openingConversationId == conversation.id) {
+      return;
+    }
+
+    setState(() {
+      _openingConversationId = conversation.id;
+    });
+
+    final participantProfile = await _ensureParticipantProfile(conversation);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _openingConversationId = null;
+    });
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -249,11 +338,9 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
   ) {
     if (conversationsProvider.isLoadingConversations && conversations.isEmpty) {
       return ListView(
-        physics: AlwaysScrollableScrollPhysics(),
-        children: [
-          SizedBox(height: 180),
-          Center(child: CircularProgressIndicator()),
-        ],
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+        children: [_buildConversationSkeletonList()],
       );
     }
 
@@ -337,9 +424,48 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
     );
   }
 
+  Widget _buildConversationSkeletonList() {
+    return Column(
+      children: List.generate(
+        5,
+        (index) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: const [
+                AppSkeletonCircle(size: 56),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: AppSkeletonBlock(height: 14)),
+                          SizedBox(width: 12),
+                          AppSkeletonBlock(width: 44, height: 10),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 96, height: 12),
+                      SizedBox(height: 10),
+                      AppSkeletonBlock(width: 180, height: 12),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildConversationCard(Conversation conversation) {
     final currentUserId = context.read<AuthProvider>().currentUser?.id;
     final isUnread = conversation.hasUnreadFor(currentUserId);
+    final isOpening = _openingConversationId == conversation.id;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -410,6 +536,14 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
                         fontSize: 11,
                       ),
                     ),
+                    if (isOpening) ...[
+                      const SizedBox(width: 8),
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -725,18 +859,17 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            conversationsProvider.errorMessage ??
-                'Unable to send your message right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        conversationsProvider.errorMessage ?? 'Unable to send your message right now.',
+        statusCode: conversationsProvider.lastStatusCode,
+        fallbackMessage: 'Unable to send your message right now.',
       );
       return;
     }
 
     _messageController.clear();
+    AppToast.showSuccess(context, 'Message sent successfully.');
     unawaited(_loadMessages());
   }
 
@@ -753,9 +886,7 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
       fallback: '',
     );
     if (phoneNumber.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This sitter has not shared a phone number.')),
-      );
+      AppToast.showInfo(context, 'This sitter has not shared a phone number.');
       return;
     }
 
@@ -766,8 +897,9 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
     }
 
     if (!launched) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open the phone app on this device.')),
+      AppToast.showError(
+        context,
+        'Unable to open the phone app on this device.',
       );
     }
   }
@@ -933,7 +1065,7 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
     String? currentUserId,
   ) {
     if (conversationsProvider.isLoadingMessages && messages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return _buildMessageThreadSkeleton();
     }
 
     if (conversationsProvider.errorMessage != null && messages.isEmpty) {
@@ -987,6 +1119,58 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
               currentUserId != null && message.senderId == currentUserId,
         );
       },
+    );
+  }
+
+  Widget _buildMessageThreadSkeleton() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppSkeletonBlock(width: 180, height: 12),
+                SizedBox(height: 8),
+                AppSkeletonBlock(width: 56, height: 10),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                AppSkeletonBlock(width: 150, height: 12),
+                SizedBox(height: 8),
+                AppSkeletonBlock(width: 48, height: 10),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppSkeletonBlock(width: 200, height: 12),
+                SizedBox(height: 8),
+                AppSkeletonBlock(width: 52, height: 10),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

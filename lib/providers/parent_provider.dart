@@ -103,6 +103,33 @@ class ParentProvider extends ChangeNotifier {
     return null;
   }
 
+  BabysitterProfile? cachedBabysitterByName(String fullName) {
+    final normalizedFullName = fullName.trim().toLowerCase();
+    if (normalizedFullName.isEmpty) {
+      return null;
+    }
+
+    for (final sitter in _babysitterCache.values) {
+      if (sitter.fullName.trim().toLowerCase() == normalizedFullName) {
+        return sitter;
+      }
+    }
+
+    for (final sitter in _sitters) {
+      if (sitter.fullName.trim().toLowerCase() == normalizedFullName) {
+        return sitter;
+      }
+    }
+
+    for (final sitter in _savedSitters) {
+      if (sitter.fullName.trim().toLowerCase() == normalizedFullName) {
+        return sitter;
+      }
+    }
+
+    return null;
+  }
+
   Future<BabysitterProfile?> fetchBabysitterById(String babysitterId) async {
     final normalizedId = babysitterId.trim();
     if (normalizedId.isEmpty) {

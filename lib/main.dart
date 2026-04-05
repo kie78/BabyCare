@@ -17,6 +17,7 @@ import 'services/babysitter_service.dart';
 import 'services/conversation_service.dart';
 import 'services/parent_service.dart';
 import 'services/secure_storage_service.dart';
+import 'widgets/app_skeleton.dart';
 
 final SecureStorageService _storage = SecureStorageService();
 final ApiClient _apiClient = ApiClient(
@@ -99,9 +100,7 @@ class _AppBootstrapScreen extends StatelessWidget {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
         if (authProvider.isInitializing) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return const Scaffold(body: _AppBootstrapSkeleton());
         }
 
         if (!authProvider.isAuthenticated) {
@@ -118,6 +117,29 @@ class _AppBootstrapScreen extends StatelessWidget {
 
         return const GatewayScreen();
       },
+    );
+  }
+}
+
+class _AppBootstrapSkeleton extends StatelessWidget {
+  const _AppBootstrapSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            AppSkeletonCircle(size: 88),
+            SizedBox(height: 24),
+            AppSkeletonBlock(width: 160, height: 22),
+            SizedBox(height: 12),
+            AppSkeletonBlock(width: 220, height: 14),
+          ],
+        ),
+      ),
     );
   }
 }

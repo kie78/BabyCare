@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../config/theme.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/app_toast.dart';
 import 'parent_login.dart';
 
 class ParentAccountCreationScreen extends StatefulWidget {
@@ -57,9 +58,7 @@ class _ParentAccountCreationScreenState
         _phoneController.text.isEmpty ||
         _locationController.text.isEmpty ||
         _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      AppToast.showInfo(context, 'Please fill all fields');
       return;
     }
 
@@ -79,22 +78,16 @@ class _ParentAccountCreationScreenState
     }
 
     if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            authProvider.errorMessage ??
-                'We could not create your account right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        authProvider.errorMessage ?? 'We could not create your account right now.',
+        statusCode: authProvider.lastStatusCode,
+        fallbackMessage: 'We could not create your account right now.',
       );
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Account created successfully. Please log in.'),
-      ),
-    );
+    AppToast.showSuccess(context, 'Account created successfully. Please log in.');
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (context) => const ParentLoginScreen()),
     );

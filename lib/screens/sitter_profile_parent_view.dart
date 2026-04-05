@@ -6,6 +6,8 @@ import '../models/babysitter_profile.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversations_provider.dart';
 import '../providers/parent_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'parent_messages.dart';
 
@@ -90,21 +92,18 @@ class _SitterProfileParentViewScreenState
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            parentProvider.errorMessage ??
-                'Unable to update your saved sitters right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        parentProvider.errorMessage ?? 'Unable to update your saved sitters right now.',
+        statusCode: parentProvider.lastStatusCode,
+        fallbackMessage: 'Unable to update your saved sitters right now.',
       );
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(parentProvider.successMessage ?? 'Saved list updated.'),
-      ),
+    AppToast.showSuccess(
+      context,
+      parentProvider.successMessage ?? 'Saved list updated.',
     );
   }
 
@@ -134,13 +133,11 @@ class _SitterProfileParentViewScreenState
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            conversationsProvider.errorMessage ??
-                'Unable to start a conversation right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        conversationsProvider.errorMessage ?? 'Unable to start a conversation right now.',
+        statusCode: conversationsProvider.lastStatusCode,
+        fallbackMessage: 'Unable to start a conversation right now.',
       );
       return;
     }
@@ -148,6 +145,8 @@ class _SitterProfileParentViewScreenState
     setState(() {
       _isStartingConversation = false;
     });
+
+    AppToast.showSuccess(context, 'Conversation ready.');
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -219,10 +218,7 @@ class _SitterProfileParentViewScreenState
 
   Widget _buildBody(ParentProvider parentProvider, BabysitterProfile? sitter) {
     if (parentProvider.isLoadingSelectedSitter && sitter == null) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 80),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return _buildProfileSkeleton();
     }
 
     if (parentProvider.errorMessage != null && sitter == null) {
@@ -269,6 +265,64 @@ class _SitterProfileParentViewScreenState
         const SizedBox(height: 16),
         _buildLanguagesSection(sitter),
         const SizedBox(height: 100),
+      ],
+    );
+  }
+
+  Widget _buildProfileSkeleton() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Center(child: AppSkeletonCircle(size: 120)),
+        const SizedBox(height: 24),
+        AppSkeletonCard(
+          child: Column(
+            children: List.generate(
+              5,
+              (index) => const Padding(
+                padding: EdgeInsets.only(bottom: 14),
+                child: Row(
+                  children: [
+                    AppSkeletonBlock(width: 48, height: 48),
+                    SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AppSkeletonBlock(width: 90, height: 12),
+                          SizedBox(height: 8),
+                          AppSkeletonBlock(width: double.infinity, height: 14),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        AppSkeletonCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              AppSkeletonBlock(width: 110, height: 14),
+              SizedBox(height: 12),
+              AppSkeletonBlock(width: double.infinity, height: 56),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        AppSkeletonCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              AppSkeletonBlock(width: 90, height: 14),
+              SizedBox(height: 12),
+              AppSkeletonBlock(width: double.infinity, height: 56),
+            ],
+          ),
+        ),
       ],
     );
   }

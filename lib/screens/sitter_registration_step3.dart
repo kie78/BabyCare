@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/sitter_registration.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/app_toast.dart';
 import 'sitter_login.dart';
 
 class SitterRegistrationStep3Screen extends StatefulWidget {
@@ -123,10 +124,9 @@ class _SitterRegistrationStep3ScreenState
       final file = result.files.single;
       final path = file.path;
       if (path == null || path.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unable to access the selected file. Try again.'),
-          ),
+        AppToast.showError(
+          context,
+          'Unable to access the selected file. Try again.',
         );
         return;
       }
@@ -137,11 +137,9 @@ class _SitterRegistrationStep3ScreenState
         _selectedFileNames[docId] = file.name;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${_documentLabel(docId)} selected successfully.'),
-          duration: const Duration(seconds: 2),
-        ),
+      AppToast.showSuccess(
+        context,
+        '${_documentLabel(docId)} selected successfully.',
       );
     } finally {
       if (mounted) {
@@ -166,9 +164,7 @@ class _SitterRegistrationStep3ScreenState
 
   Future<void> _onCompletePressed() async {
     if (!_allDocumentsUploaded()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please upload all documents')),
-      );
+      AppToast.showInfo(context, 'Please upload all documents');
       return;
     }
 
@@ -182,13 +178,11 @@ class _SitterRegistrationStep3ScreenState
     }
 
     if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            authProvider.errorMessage ??
-                'Registration failed. Please try again.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        authProvider.errorMessage ?? 'Registration failed. Please try again.',
+        statusCode: authProvider.lastStatusCode,
+        fallbackMessage: 'Registration failed. Please try again.',
       );
       return;
     }

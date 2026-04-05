@@ -10,6 +10,8 @@ import '../models/profile_view.dart';
 import '../providers/auth_provider.dart';
 import '../providers/babysitter_dashboard_provider.dart';
 import '../providers/conversations_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'sitter_account.dart';
 import 'sitter_dashboard.dart';
@@ -220,11 +222,9 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
   ) {
     if (conversationsProvider.isLoadingConversations && conversations.isEmpty) {
       return ListView(
-        physics: AlwaysScrollableScrollPhysics(),
-        children: [
-          SizedBox(height: 180),
-          Center(child: CircularProgressIndicator()),
-        ],
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+        children: [_buildConversationSkeletonList()],
       );
     }
 
@@ -303,6 +303,44 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConversationSkeletonList() {
+    return Column(
+      children: List.generate(
+        5,
+        (index) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: const [
+                AppSkeletonCircle(size: 56),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: AppSkeletonBlock(height: 14)),
+                          SizedBox(width: 12),
+                          AppSkeletonBlock(width: 44, height: 10),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 90, height: 12),
+                      SizedBox(height: 10),
+                      AppSkeletonBlock(width: 170, height: 12),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -633,18 +671,17 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            conversationsProvider.errorMessage ??
-                'Unable to send your message right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        conversationsProvider.errorMessage ?? 'Unable to send your message right now.',
+        statusCode: conversationsProvider.lastStatusCode,
+        fallbackMessage: 'Unable to send your message right now.',
       );
       return;
     }
 
     _messageController.clear();
+    AppToast.showSuccess(context, 'Message sent successfully.');
     unawaited(_loadMessages());
   }
 
@@ -774,7 +811,7 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
     String? currentUserId,
   ) {
     if (conversationsProvider.isLoadingMessages && messages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return _buildMessageThreadSkeleton();
     }
 
     if (conversationsProvider.errorMessage != null && messages.isEmpty) {
@@ -828,6 +865,58 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
               currentUserId != null && message.senderId == currentUserId,
         );
       },
+    );
+  }
+
+  Widget _buildMessageThreadSkeleton() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppSkeletonBlock(width: 170, height: 12),
+                SizedBox(height: 8),
+                AppSkeletonBlock(width: 50, height: 10),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                AppSkeletonBlock(width: 160, height: 12),
+                SizedBox(height: 8),
+                AppSkeletonBlock(width: 48, height: 10),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: AppSkeletonCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppSkeletonBlock(width: 190, height: 12),
+                SizedBox(height: 8),
+                AppSkeletonBlock(width: 54, height: 10),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

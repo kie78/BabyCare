@@ -291,6 +291,7 @@ class BabysitterDashboardProvider extends ChangeNotifier {
     required String currency,
     required String paymentMethod,
     required List<String> availability,
+    String? profilePicturePath,
   }) async {
     _isUpdatingProfile = true;
     _errorMessage = null;
@@ -306,6 +307,7 @@ class BabysitterDashboardProvider extends ChangeNotifier {
         currency: currency,
         paymentMethod: paymentMethod,
         availability: availability,
+        profilePicturePath: profilePicturePath,
       );
       _profile = await _babysitterService.getMyProfile();
       _successMessage = 'Your profile has been updated successfully.';

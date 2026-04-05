@@ -5,6 +5,8 @@ import '../config/theme.dart';
 import '../models/profile_view.dart';
 import '../providers/auth_provider.dart';
 import '../providers/babysitter_dashboard_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'parent_profile_sitter_view.dart';
 import 'sitter_account.dart';
@@ -63,23 +65,18 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            dashboardProvider.errorMessage ??
-                'Unable to update your work status right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        dashboardProvider.errorMessage ?? 'Unable to update your work status right now.',
+        statusCode: dashboardProvider.lastStatusCode,
+        fallbackMessage: 'Unable to update your work status right now.',
       );
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          dashboardProvider.successMessage ?? 'Work status updated.',
-        ),
-      ),
+    AppToast.showSuccess(
+      context,
+      dashboardProvider.successMessage ?? 'Work status updated.',
     );
   }
 
@@ -152,10 +149,7 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
 
   Widget _buildDashboardBody(BabysitterDashboardProvider dashboardProvider) {
     if (dashboardProvider.isLoading && dashboardProvider.profile == null) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 160),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return _buildDashboardSkeleton();
     }
 
     if (dashboardProvider.errorMessage != null &&
@@ -235,6 +229,74 @@ class _SitterDashboardScreenState extends State<SitterDashboardScreen> {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildDashboardSkeleton() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            AppSkeletonBlock(width: 170, height: 26),
+            AppSkeletonCircle(size: 56),
+          ],
+        ),
+        const SizedBox(height: 24),
+        AppSkeletonCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              AppSkeletonBlock(width: 110, height: 14),
+              SizedBox(height: 14),
+              AppSkeletonBlock(width: double.infinity, height: 52),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        AppSkeletonCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              AppSkeletonBlock(width: 120, height: 14),
+              SizedBox(height: 16),
+              AppSkeletonBlock(width: 80, height: 28),
+              SizedBox(height: 10),
+              AppSkeletonBlock(width: 150, height: 12),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+        const AppSkeletonBlock(width: 128, height: 16),
+        const SizedBox(height: 16),
+        ...List.generate(
+          3,
+          (index) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: AppSkeletonCard(
+              child: Row(
+                children: const [
+                  AppSkeletonCircle(size: 52),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppSkeletonBlock(width: 120, height: 14),
+                        SizedBox(height: 8),
+                        AppSkeletonBlock(width: 160, height: 12),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 100),
       ],
     );
   }

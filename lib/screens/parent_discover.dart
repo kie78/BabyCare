@@ -5,6 +5,8 @@ import '../config/theme.dart';
 import '../models/babysitter_profile.dart';
 import '../providers/auth_provider.dart';
 import '../providers/parent_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'parent_account.dart';
 import 'parent_messages.dart';
@@ -195,13 +197,11 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            parentProvider.errorMessage ??
-                'Unable to update your saved sitters right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        parentProvider.errorMessage ?? 'Unable to update your saved sitters right now.',
+        statusCode: parentProvider.lastStatusCode,
+        fallbackMessage: 'Unable to update your saved sitters right now.',
       );
       return;
     }
@@ -220,11 +220,7 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(parentProvider.successMessage ?? 'Saved updated.'),
-      ),
-    );
+    AppToast.showSuccess(context, parentProvider.successMessage ?? 'Saved updated.');
   }
 
   Future<void> _onFilterPressed() async {
@@ -232,11 +228,7 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
     final locations = _availableLocations(parentProvider.sitters);
 
     if (locations.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No sitter locations are available yet.'),
-        ),
-      );
+      AppToast.showInfo(context, 'No sitter locations are available yet.');
       return;
     }
 
@@ -447,12 +439,7 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
                               const SizedBox(height: 16),
                               if (parentProvider.isLoadingSitters &&
                                   sitters.isEmpty)
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 64),
-                                  child: Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                )
+                                _buildDiscoverSkeleton()
                               else if (parentProvider.errorMessage != null &&
                                   sitters.isEmpty)
                                 _buildErrorState(parentProvider)
@@ -630,6 +617,39 @@ class _ParentDiscoverScreenState extends State<ParentDiscoverScreen> {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium!.copyWith(
             color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiscoverSkeleton() {
+    return Column(
+      children: List.generate(
+        5,
+        (index) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AppSkeletonCard(
+            child: Row(
+              children: const [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppSkeletonBlock(width: 140, height: 16),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 88, height: 12),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 120, height: 14),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 170, height: 12),
+                    ],
+                  ),
+                ),
+                SizedBox(width: 16),
+                AppSkeletonCircle(size: 64),
+              ],
+            ),
           ),
         ),
       ),

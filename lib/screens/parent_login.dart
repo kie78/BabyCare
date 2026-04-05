@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/auth_user.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'parent_account_creation.dart';
 import 'parent_discover.dart';
@@ -36,9 +37,7 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
 
   Future<void> _onLoginPressed() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      AppToast.showInfo(context, 'Please fill all fields');
       return;
     }
 
@@ -65,28 +64,22 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This account does not have parent access.'),
-        ),
-      );
+      AppToast.showError(context, 'This account does not have parent access.');
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          authProvider.errorMessage ?? 'Login failed. Please try again.',
-        ),
-      ),
+    AppToast.showError(
+      context,
+      authProvider.errorMessage ?? 'Login failed. Please try again.',
+      statusCode: authProvider.lastStatusCode,
+      fallbackMessage: 'Login failed. Please try again.',
+      normalizeUnauthorized: false,
     );
   }
 
   void _onForgotPasswordPressed() {
     // TODO: Implement forgot password flow
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Forgot password flow not yet implemented')),
-    );
+    AppToast.showInfo(context, 'Forgot password flow not yet implemented');
   }
 
   void _onCreateAccountPressed() {

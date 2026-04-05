@@ -9,6 +9,8 @@ import '../models/babysitter_profile.dart';
 import '../models/parent_profile.dart';
 import '../providers/auth_provider.dart';
 import '../providers/parent_provider.dart';
+import '../widgets/app_skeleton.dart';
+import '../widgets/app_toast.dart';
 import 'gateway_screen.dart';
 import 'parent_discover.dart';
 import 'parent_messages.dart';
@@ -472,11 +474,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     final file = result.files.single;
     final path = file.path;
     if (path == null || path.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Unable to access the selected image. Try again.'),
-        ),
-      );
+      AppToast.showError(context, 'Unable to access the selected image. Try again.');
       return;
     }
 
@@ -485,11 +483,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     });
     _updateHasChanges();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${file.name} selected successfully.'),
-      ),
-    );
+    AppToast.showSuccess(context, '${file.name} selected successfully.');
   }
 
   void _focusField(FocusNode focusNode, TextEditingController controller) {
@@ -520,12 +514,9 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     if (fallbackProfile != null) {
       _syncFormWithProfile(fallbackProfile);
       if ((parentProvider.errorMessage ?? '').trim().isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Your basic account details were loaded. Some profile fields could not be fetched from the server.',
-            ),
-          ),
+        AppToast.showInfo(
+          context,
+          'Your basic account details were loaded. Some profile fields could not be fetched from the server.',
         );
       }
     }
@@ -551,11 +542,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     final parentProvider = context.read<ParentProvider>();
     final currentProfile = parentProvider.profile ?? _initialProfile;
     if (currentProfile == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Load your profile before saving changes.'),
-        ),
-      );
+      AppToast.showInfo(context, 'Load your profile before saving changes.');
       return;
     }
 
@@ -587,13 +574,11 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            parentProvider.errorMessage ??
-                'Unable to save your profile right now.',
-          ),
-        ),
+      AppToast.showError(
+        context,
+        parentProvider.errorMessage ?? 'Unable to save your profile right now.',
+        statusCode: parentProvider.lastStatusCode,
+        fallbackMessage: 'Unable to save your profile right now.',
       );
       return;
     }
@@ -601,15 +586,11 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     final savedProfile = parentProvider.profile ?? updatedProfile;
     _syncFormWithProfile(savedProfile);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          hadAvatarChange
-              ? 'Profile and avatar updated successfully.'
-              : (parentProvider.successMessage ??
-                    'Profile updated successfully.'),
-        ),
-      ),
+    AppToast.showSuccess(
+      context,
+      hadAvatarChange
+          ? 'Profile and avatar updated successfully.'
+          : (parentProvider.successMessage ?? 'Profile updated successfully.'),
     );
   }
 
@@ -647,10 +628,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     if (parentProvider.isLoadingProfile &&
         parentProvider.profile == null &&
         !hasLocalFallbackProfile) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 120),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return _buildProfileSkeleton();
     }
 
     if (parentProvider.errorMessage != null &&
@@ -733,6 +711,43 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
           const SizedBox(height: 32),
           _buildSaveButton(parentProvider.isUpdatingProfile),
         ],
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildProfileSkeleton() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 24),
+        const Center(child: AppSkeletonCircle(size: 120)),
+        const SizedBox(height: 32),
+        ...List.generate(
+          6,
+          (index) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: AppSkeletonCard(
+              padding: const EdgeInsets.all(12),
+              child: const Row(
+                children: [
+                  AppSkeletonBlock(width: 40, height: 40),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppSkeletonBlock(width: 90, height: 12),
+                        SizedBox(height: 8),
+                        AppSkeletonBlock(width: double.infinity, height: 14),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
         const SizedBox(height: 24),
       ],
     );
@@ -1051,22 +1066,19 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
                 if (!context.mounted) {
                   return;
                 }
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      parentProvider.errorMessage ??
-                          'Unable to update your saved sitters right now.',
-                    ),
-                  ),
+                AppToast.showError(
+                  context,
+                  parentProvider.errorMessage ??
+                      'Unable to update your saved sitters right now.',
+                  statusCode: parentProvider.lastStatusCode,
+                  fallbackMessage:
+                      'Unable to update your saved sitters right now.',
                 );
                 return;
               }
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    parentProvider.successMessage ?? 'Saved list updated.',
-                  ),
-                ),
+              AppToast.showSuccess(
+                context,
+                parentProvider.successMessage ?? 'Saved list updated.',
               );
             },
             child: Text(
@@ -1125,11 +1137,9 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
   ) {
     if (parentProvider.isLoadingSavedSitters && savedSitters.isEmpty) {
       return ListView(
-        physics: AlwaysScrollableScrollPhysics(),
-        children: [
-          SizedBox(height: 180),
-          Center(child: CircularProgressIndicator()),
-        ],
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+        children: [_buildSavedSkeletonList()],
       );
     }
 
@@ -1192,6 +1202,37 @@ class _ParentSavedSittersScreenState extends State<ParentSavedSittersScreen> {
           child: _buildSitterCard(sitter),
         );
       },
+    );
+  }
+
+  Widget _buildSavedSkeletonList() {
+    return Column(
+      children: List.generate(
+        4,
+        (index) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AppSkeletonCard(
+            child: Row(
+              children: const [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppSkeletonBlock(width: 130, height: 16),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 95, height: 12),
+                      SizedBox(height: 8),
+                      AppSkeletonBlock(width: 150, height: 12),
+                    ],
+                  ),
+                ),
+                SizedBox(width: 16),
+                AppSkeletonCircle(size: 64),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

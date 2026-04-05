@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+
 import '../config/theme.dart';
 import '../models/sitter_registration.dart';
+import '../widgets/app_toast.dart';
 import 'sitter_registration_step3.dart';
 
 class SitterRegistrationStep2Screen extends StatefulWidget {
@@ -115,9 +117,7 @@ class _SitterRegistrationStep2ScreenState
     if (_selectedDays.isEmpty ||
         _rateController.text.isEmpty ||
         _selectedLanguages.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      AppToast.showInfo(context, 'Please fill all fields');
       return;
     }
 

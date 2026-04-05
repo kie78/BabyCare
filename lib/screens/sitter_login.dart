@@ -5,6 +5,7 @@ import '../config/theme.dart';
 import '../models/auth_user.dart';
 import '../providers/auth_provider.dart';
 import '../models/sitter_registration.dart';
+import '../widgets/app_toast.dart';
 import 'sitter_dashboard.dart';
 import 'sitter_registration_step1.dart';
 import 'gateway_screen.dart';
@@ -39,9 +40,7 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
         if (!mounted) {
           return;
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(widget.successMessage!)),
-        );
+        AppToast.showSuccess(context, widget.successMessage!);
       });
     }
   }
@@ -55,9 +54,7 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
 
   Future<void> _onLoginPressed() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      AppToast.showInfo(context, 'Please fill all fields');
       return;
     }
 
@@ -86,10 +83,9 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This account does not have babysitter access.'),
-        ),
+      AppToast.showError(
+        context,
+        'This account does not have babysitter access.',
       );
       return;
     }
@@ -103,20 +99,18 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          authProvider.errorMessage ?? 'Login failed. Please try again.',
-        ),
-      ),
+    AppToast.showError(
+      context,
+      authProvider.errorMessage ?? 'Login failed. Please try again.',
+      statusCode: authProvider.lastStatusCode,
+      fallbackMessage: 'Login failed. Please try again.',
+      normalizeUnauthorized: false,
     );
   }
 
   void _onForgotPasswordPressed() {
     // TODO: Implement forgot password flow
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Forgot password flow not yet implemented')),
-    );
+    AppToast.showInfo(context, 'Forgot password flow not yet implemented');
   }
 
   void _onSignUpPressed() {
