@@ -6,6 +6,7 @@ import '../models/auth_user.dart';
 import '../providers/auth_provider.dart';
 import '../models/sitter_registration.dart';
 import '../widgets/app_toast.dart';
+import 'forgot_password.dart';
 import 'sitter_dashboard.dart';
 import 'sitter_registration_step1.dart';
 import 'gateway_screen.dart';
@@ -109,8 +110,16 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
   }
 
   void _onForgotPasswordPressed() {
-    // TODO: Implement forgot password flow
-    AppToast.showInfo(context, 'Forgot password flow not yet implemented');
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ForgotPasswordScreen(
+          accountLabel: 'babysitter',
+          prefilledIdentifier: _emailController.text,
+          identifierLabel: 'Email address',
+          identifierHint: 'Enter your babysitter account email',
+        ),
+      ),
+    );
   }
 
   void _onSignUpPressed() {

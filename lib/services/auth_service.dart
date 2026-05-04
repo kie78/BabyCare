@@ -32,6 +32,21 @@ class AuthService {
     return session;
   }
 
+  Future<void> forgotPassword({required String email}) async {
+    final response = await _apiClient.post(
+      '/api/v1/auth/forgot-password',
+      requiresAuth: false,
+      body: {'email': email.trim()},
+    );
+
+    if (response != null && response is! Map<String, dynamic>) {
+      throw ApiException(
+        statusCode: 500,
+        message: 'Invalid forgot password response',
+      );
+    }
+  }
+
   Future<void> logout() async {
     try {
       await _apiClient.post('/api/v1/auth/logout', body: <String, dynamic>{});

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../config/theme.dart';
 import '../models/babysitter_profile.dart';
@@ -13,6 +12,7 @@ import '../providers/conversations_provider.dart';
 import '../providers/parent_provider.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/report_user_sheet.dart';
 import 'gateway_screen.dart';
 import 'parent_account.dart';
 import 'parent_discover.dart';
@@ -68,7 +68,9 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
 
   Future<void> _hydrateContactProfiles(List<Conversation> conversations) async {
     final parentProvider = context.read<ParentProvider>();
-    final updatedProfiles = Map<String, BabysitterProfile>.from(_contactProfiles);
+    final updatedProfiles = Map<String, BabysitterProfile>.from(
+      _contactProfiles,
+    );
 
     await Future.wait(
       conversations.map((conversation) async {
@@ -213,7 +215,9 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
       return cachedProfile;
     }
 
-    final fetchedProfile = await parentProvider.fetchBabysitterById(participantId);
+    final fetchedProfile = await parentProvider.fetchBabysitterById(
+      participantId,
+    );
     if (fetchedProfile != null && mounted) {
       setState(() {
         _contactProfiles[conversation.id] = fetchedProfile;
@@ -248,6 +252,7 @@ class _ParentMessagesScreenState extends State<ParentMessagesScreen> {
           title: _resolveParticipantName(conversation),
           subtitle: _resolveParticipantSubtitle(conversation),
           avatarUrl: _resolveParticipantAvatar(conversation),
+          participantId: (conversation.participantId ?? '').trim(),
           phoneNumber: _resolveParticipantPhone(conversation),
           participantProfile: participantProfile,
         ),
@@ -713,6 +718,7 @@ class ParentChatThreadScreen extends StatefulWidget {
     required this.title,
     required this.subtitle,
     this.avatarUrl,
+    this.participantId,
     this.phoneNumber,
     this.participantProfile,
   });
@@ -721,6 +727,7 @@ class ParentChatThreadScreen extends StatefulWidget {
   final String title;
   final String subtitle;
   final String? avatarUrl;
+  final String? participantId;
   final String? phoneNumber;
   final BabysitterProfile? participantProfile;
 
@@ -743,7 +750,8 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
   String _firstNonEmpty(List<String?> values, {required String fallback}) {
     for (final value in values) {
       final text = (value ?? '').trim();
-      if (text.isNotEmpty && !_identityPlaceholders.contains(text.toLowerCase())) {
+      if (text.isNotEmpty &&
+          !_identityPlaceholders.contains(text.toLowerCase())) {
         return text;
       }
     }
@@ -811,7 +819,9 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
       _isLoadingParticipantProfile = true;
     });
 
-    final fetchedProfile = await parentProvider.fetchBabysitterById(participantId);
+    final fetchedProfile = await parentProvider.fetchBabysitterById(
+      participantId,
+    );
     if (!mounted) {
       return;
     }
@@ -861,7 +871,8 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
       }
       AppToast.showError(
         context,
-        conversationsProvider.errorMessage ?? 'Unable to send your message right now.',
+        conversationsProvider.errorMessage ??
+            'Unable to send your message right now.',
         statusCode: conversationsProvider.lastStatusCode,
         fallbackMessage: 'Unable to send your message right now.',
       );
@@ -873,35 +884,27 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
     unawaited(_loadMessages());
   }
 
-  Future<void> _onCallPressed() async {
+  Future<void> _onReportPressed() async {
     final conversation = context.read<ConversationsProvider>().conversationById(
       widget.conversationId,
     );
-    final phoneNumber = _firstNonEmpty(
-      [
-        _participantProfile?.phone,
-        conversation?.participantPhone,
-        widget.phoneNumber,
-      ],
-      fallback: '',
+    final reportedUserId = _firstNonEmpty([
+      widget.participantId,
+      _participantProfile?.id,
+      conversation?.participantId,
+    ], fallback: '');
+    final reportedUserName = _firstNonEmpty([
+      _participantProfile?.fullName,
+      conversation?.participantName,
+      widget.title,
+    ], fallback: 'Babysitter');
+
+    await showReportUserSheet(
+      context,
+      reportedUserId: reportedUserId,
+      reportedUserName: reportedUserName,
+      reportedUserRole: 'babysitter',
     );
-    if (phoneNumber.isEmpty) {
-      AppToast.showInfo(context, 'This sitter has not shared a phone number.');
-      return;
-    }
-
-    final uri = Uri(scheme: 'tel', path: phoneNumber);
-    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!mounted) {
-      return;
-    }
-
-    if (!launched) {
-      AppToast.showError(
-        context,
-        'Unable to open the phone app on this device.',
-      );
-    }
   }
 
   void _jumpToLatest() {
@@ -923,30 +926,21 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
         final conversation = conversationsProvider.conversationById(
           widget.conversationId,
         );
-        final title = _firstNonEmpty(
-          [
-            _participantProfile?.fullName,
-            conversation?.participantName,
-            widget.title,
-          ],
-          fallback: 'Babysitter',
-        );
-        final subtitle = _firstNonEmpty(
-          [
-            conversation?.participantOccupation,
-            conversation?.participantRole,
-            widget.subtitle,
-          ],
-          fallback: 'Babysitter',
-        );
-        final avatarUrl = _firstNonEmpty(
-          [
-            _participantProfile?.profilePictureUrl,
-            conversation?.profileImageUrl,
-            widget.avatarUrl,
-          ],
-          fallback: '',
-        );
+        final title = _firstNonEmpty([
+          _participantProfile?.fullName,
+          conversation?.participantName,
+          widget.title,
+        ], fallback: 'Babysitter');
+        final subtitle = _firstNonEmpty([
+          conversation?.participantOccupation,
+          conversation?.participantRole,
+          widget.subtitle,
+        ], fallback: 'Babysitter');
+        final avatarUrl = _firstNonEmpty([
+          _participantProfile?.profilePictureUrl,
+          conversation?.profileImageUrl,
+          widget.avatarUrl,
+        ], fallback: '');
 
         return Scaffold(
           backgroundColor: BabyCareTheme.universalWhite,
@@ -1005,9 +999,7 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
               shape: BoxShape.circle,
               gradient: BabyCareTheme.primaryGradient,
             ),
-            child: ClipOval(
-              child: _buildProfileImage(avatarUrl),
-            ),
+            child: ClipOval(child: _buildProfileImage(avatarUrl)),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1031,9 +1023,9 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
             ),
           ),
           GestureDetector(
-            onTap: _onCallPressed,
+            onTap: _onReportPressed,
             child: Icon(
-              Icons.call_outlined,
+              Icons.outlined_flag_rounded,
               color: BabyCareTheme.primaryBerry,
               size: 20,
             ),

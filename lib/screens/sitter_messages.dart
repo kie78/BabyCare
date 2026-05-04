@@ -6,12 +6,14 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
+import '../models/parent_public_profile.dart';
 import '../models/profile_view.dart';
 import '../providers/auth_provider.dart';
 import '../providers/babysitter_dashboard_provider.dart';
 import '../providers/conversations_provider.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/report_user_sheet.dart';
 import 'gateway_screen.dart';
 import 'sitter_account.dart';
 import 'sitter_dashboard.dart';
@@ -66,15 +68,15 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
     for (final conversation in conversations) {
       final participantId = (conversation.participantId ?? '').trim();
       final participantName = conversation.participantName.trim().toLowerCase();
-      final matchedVisitor = visitors.where((visitor) {
-        final visitorId = visitor.id.trim();
-        final visitorName = visitor.viewerName.trim().toLowerCase();
-        return (participantId.isNotEmpty && visitorId == participantId) ||
-            (participantName.isNotEmpty && visitorName == participantName);
-      }).cast<ProfileView?>().firstWhere(
-            (visitor) => visitor != null,
-            orElse: () => null,
-          );
+      final matchedVisitor = visitors
+          .where((visitor) {
+            final visitorId = visitor.id.trim();
+            final visitorName = visitor.viewerName.trim().toLowerCase();
+            return (participantId.isNotEmpty && visitorId == participantId) ||
+                (participantName.isNotEmpty && visitorName == participantName);
+          })
+          .cast<ProfileView?>()
+          .firstWhere((visitor) => visitor != null, orElse: () => null);
 
       if (matchedVisitor != null) {
         mappedProfiles[conversation.id] = matchedVisitor;
@@ -133,6 +135,7 @@ class _SitterMessagesScreenState extends State<SitterMessagesScreen> {
                       conversation.participantRole ??
                       'Parent')
                   .trim(),
+          participantId: (conversation.participantId ?? '').trim(),
           avatarUrl: _resolveParticipantAvatar(conversation),
         ),
       ),
@@ -585,12 +588,14 @@ class SitterChatThreadScreen extends StatefulWidget {
     required this.conversationId,
     required this.title,
     required this.subtitle,
+    this.participantId,
     this.avatarUrl,
   });
 
   final String conversationId;
   final String title;
   final String subtitle;
+  final String? participantId;
   final String? avatarUrl;
 
   @override
@@ -600,6 +605,8 @@ class SitterChatThreadScreen extends StatefulWidget {
 class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
   late final TextEditingController _messageController;
   final ScrollController _scrollController = ScrollController();
+  ParentPublicProfile? _participantProfile;
+  bool _isLoadingParticipantProfile = false;
 
   @override
   void initState() {
@@ -627,11 +634,52 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
     if (!mounted) {
       return;
     }
+    await _hydrateParticipantProfile();
+    if (!mounted) {
+      return;
+    }
     await _handleUnauthorized(conversationsProvider.lastStatusCode);
     if (!mounted) {
       return;
     }
     _jumpToLatest();
+  }
+
+  Future<void> _hydrateParticipantProfile() async {
+    final dashboardProvider = context.read<BabysitterDashboardProvider>();
+    final conversation = context.read<ConversationsProvider>().conversationById(
+      widget.conversationId,
+    );
+    final participantId =
+        (widget.participantId ?? conversation?.participantId ?? '').trim();
+
+    if (participantId.isEmpty || _isLoadingParticipantProfile) {
+      return;
+    }
+
+    final cachedProfile = dashboardProvider.cachedParentProfile(participantId);
+    if (cachedProfile != null) {
+      setState(() {
+        _participantProfile ??= cachedProfile;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingParticipantProfile = true;
+    });
+
+    final fetchedProfile = await dashboardProvider.fetchParentPublicProfile(
+      participantId,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _participantProfile ??= fetchedProfile;
+      _isLoadingParticipantProfile = false;
+    });
   }
 
   Future<void> _handleUnauthorized(int? statusCode) async {
@@ -673,7 +721,8 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
       }
       AppToast.showError(
         context,
-        conversationsProvider.errorMessage ?? 'Unable to send your message right now.',
+        conversationsProvider.errorMessage ??
+            'Unable to send your message right now.',
         statusCode: conversationsProvider.lastStatusCode,
         fallbackMessage: 'Unable to send your message right now.',
       );
@@ -683,6 +732,23 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
     _messageController.clear();
     AppToast.showSuccess(context, 'Message sent successfully.');
     unawaited(_loadMessages());
+  }
+
+  Future<void> _onReportPressed() async {
+    final conversation = context.read<ConversationsProvider>().conversationById(
+      widget.conversationId,
+    );
+    final reportedUserId =
+        (widget.participantId ?? conversation?.participantId ?? '').trim();
+    final reportedUserName = (conversation?.participantName ?? widget.title)
+        .trim();
+
+    await showReportUserSheet(
+      context,
+      reportedUserId: reportedUserId,
+      reportedUserName: reportedUserName.isEmpty ? 'Parent' : reportedUserName,
+      reportedUserRole: 'parent',
+    );
   }
 
   void _jumpToLatest() {
@@ -705,7 +771,9 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
           widget.conversationId,
         );
         final headerAvatarUrl =
-            (conversation?.profileImageUrl ?? '').trim().isNotEmpty
+            (_participantProfile?.profilePictureUrl ?? '').trim().isNotEmpty
+            ? _participantProfile?.profilePictureUrl
+            : (conversation?.profileImageUrl ?? '').trim().isNotEmpty
             ? conversation?.profileImageUrl
             : widget.avatarUrl;
         _jumpToLatest();
@@ -759,9 +827,7 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
               shape: BoxShape.circle,
               gradient: BabyCareTheme.primaryGradient,
             ),
-            child: ClipOval(
-              child: _buildProfileImage(avatarUrl),
-            ),
+            child: ClipOval(child: _buildProfileImage(avatarUrl)),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -782,6 +848,14 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
                   ),
                 ),
               ],
+            ),
+          ),
+          GestureDetector(
+            onTap: _onReportPressed,
+            child: const Icon(
+              Icons.outlined_flag_rounded,
+              color: BabyCareTheme.primaryBerry,
+              size: 20,
             ),
           ),
         ],
@@ -925,10 +999,7 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
     required bool isOutgoing,
   }) {
     final bubble = Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 10,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: isOutgoing ? null : BabyCareTheme.lightGrey,
         gradient: isOutgoing ? BabyCareTheme.primaryGradient : null,

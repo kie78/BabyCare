@@ -35,6 +35,37 @@ class BabysitterDashboardProvider extends ChangeNotifier {
   int? get lastStatusCode => _lastStatusCode;
   bool get isAvailable => _profile?.isAvailable ?? false;
 
+  ParentPublicProfile? cachedParentProfile(String parentId) {
+    return _parentProfileCache[parentId.trim()];
+  }
+
+  Future<ParentPublicProfile?> fetchParentPublicProfile(String parentId) async {
+    final normalizedParentId = parentId.trim();
+    if (normalizedParentId.isEmpty) {
+      return null;
+    }
+
+    final cached = _parentProfileCache[normalizedParentId];
+    if (cached != null) {
+      return cached;
+    }
+
+    try {
+      final profile = await _babysitterService.getParentPublicProfile(
+        normalizedParentId,
+      );
+      _parentProfileCache[normalizedParentId] = profile;
+      return profile;
+    } on ApiException catch (error) {
+      _lastStatusCode = error.statusCode;
+      _errorMessage = error.message;
+      notifyListeners();
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   int _extractCount(dynamic payload) {
     if (payload is int) {
       return payload;
@@ -163,24 +194,22 @@ class BabysitterDashboardProvider extends ChangeNotifier {
       enrichedViews.add(
         view.copyWith(
           viewerName: publicProfile.fullName,
-          occupation:
-              (publicProfile.occupation ?? '').trim().isEmpty
-                  ? view.occupation
-                  : publicProfile.occupation,
+          occupation: (publicProfile.occupation ?? '').trim().isEmpty
+              ? view.occupation
+              : publicProfile.occupation,
           location:
               (publicProfile.primaryLocation ?? publicProfile.location ?? '')
-                      .trim()
-                      .isEmpty
-                  ? view.location
-                  : (publicProfile.primaryLocation ?? publicProfile.location),
-          preferredHours:
-              (publicProfile.preferredHours ?? '').trim().isEmpty
-                  ? view.preferredHours
-                  : publicProfile.preferredHours,
+                  .trim()
+                  .isEmpty
+              ? view.location
+              : (publicProfile.primaryLocation ?? publicProfile.location),
+          preferredHours: (publicProfile.preferredHours ?? '').trim().isEmpty
+              ? view.preferredHours
+              : publicProfile.preferredHours,
           profileImageUrl:
               (publicProfile.profilePictureUrl ?? '').trim().isEmpty
-                  ? view.profileImageUrl
-                  : publicProfile.profilePictureUrl,
+              ? view.profileImageUrl
+              : publicProfile.profilePictureUrl,
         ),
       );
     }
@@ -206,7 +235,8 @@ class BabysitterDashboardProvider extends ChangeNotifier {
       }
 
       try {
-        final weeklyViewsResponse = await _babysitterService.getWeeklyProfileViews();
+        final weeklyViewsResponse = await _babysitterService
+            .getWeeklyProfileViews();
         _weeklyViews = _extractCount(weeklyViewsResponse);
         if (_weeklyViews == 0 && _profileViews.isNotEmpty) {
           final now = DateTime.now();

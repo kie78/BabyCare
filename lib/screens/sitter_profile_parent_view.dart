@@ -8,6 +8,7 @@ import '../providers/conversations_provider.dart';
 import '../providers/parent_provider.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/report_user_sheet.dart';
 import 'gateway_screen.dart';
 import 'parent_messages.dart';
 
@@ -94,7 +95,8 @@ class _SitterProfileParentViewScreenState
       }
       AppToast.showError(
         context,
-        parentProvider.errorMessage ?? 'Unable to update your saved sitters right now.',
+        parentProvider.errorMessage ??
+            'Unable to update your saved sitters right now.',
         statusCode: parentProvider.lastStatusCode,
         fallbackMessage: 'Unable to update your saved sitters right now.',
       );
@@ -135,7 +137,8 @@ class _SitterProfileParentViewScreenState
       }
       AppToast.showError(
         context,
-        conversationsProvider.errorMessage ?? 'Unable to start a conversation right now.',
+        conversationsProvider.errorMessage ??
+            'Unable to start a conversation right now.',
         statusCode: conversationsProvider.lastStatusCode,
         fallbackMessage: 'Unable to start a conversation right now.',
       );
@@ -159,10 +162,20 @@ class _SitterProfileParentViewScreenState
                       'Babysitter')
                   .trim(),
           avatarUrl: sitter.profilePictureUrl,
+          participantId: sitter.id,
           phoneNumber: sitter.phone,
           participantProfile: sitter,
         ),
       ),
+    );
+  }
+
+  Future<void> _onReportPressed(BabysitterProfile sitter) async {
+    await showReportUserSheet(
+      context,
+      reportedUserId: sitter.id,
+      reportedUserName: sitter.fullName,
+      reportedUserRole: 'babysitter',
     );
   }
 
@@ -182,6 +195,9 @@ class _SitterProfileParentViewScreenState
                   children: [
                     _buildHeader(
                       isSaved: isSaved,
+                      onReportPressed: sitter == null
+                          ? null
+                          : () => _onReportPressed(sitter),
                       onSavePressed: sitter == null
                           ? null
                           : () => _toggleSaved(sitter),
@@ -205,7 +221,6 @@ class _SitterProfileParentViewScreenState
               if (sitter != null)
                 Positioned(
                   left: 24,
-                  right: 24,
                   bottom: 24,
                   child: _buildMessageButton(sitter),
                 ),
@@ -329,6 +344,7 @@ class _SitterProfileParentViewScreenState
 
   Widget _buildHeader({
     required bool isSaved,
+    required VoidCallback? onReportPressed,
     required VoidCallback? onSavePressed,
   }) {
     return Padding(
@@ -357,13 +373,27 @@ class _SitterProfileParentViewScreenState
           ),
           Positioned(
             right: 0,
-            child: GestureDetector(
-              onTap: onSavePressed,
-              child: Icon(
-                isSaved ? Icons.bookmark_rounded : Icons.bookmark_outline,
-                color: BabyCareTheme.primaryBerry,
-                size: 24,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: onReportPressed,
+                  child: const Icon(
+                    Icons.outlined_flag_rounded,
+                    color: BabyCareTheme.primaryBerry,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                GestureDetector(
+                  onTap: onSavePressed,
+                  child: Icon(
+                    isSaved ? Icons.bookmark_rounded : Icons.bookmark_outline,
+                    color: BabyCareTheme.primaryBerry,
+                    size: 24,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -590,10 +620,7 @@ class _SitterProfileParentViewScreenState
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: _buildStatusChip(
-              label: 'Availability',
-              value: availability,
-            ),
+            child: _buildStatusChip(label: 'Availability', value: availability),
           ),
         ],
       ),
@@ -703,7 +730,9 @@ class _SitterProfileParentViewScreenState
         ],
       ),
       child: ElevatedButton(
-        onPressed: _isStartingConversation ? null : () => _startConversation(sitter),
+        onPressed: _isStartingConversation
+            ? null
+            : () => _startConversation(sitter),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,

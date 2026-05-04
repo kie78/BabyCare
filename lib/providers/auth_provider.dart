@@ -67,6 +67,29 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> forgotPassword({required String email}) async {
+    _isLoading = true;
+    _errorMessage = null;
+    _lastStatusCode = null;
+    notifyListeners();
+
+    try {
+      await _authService.forgotPassword(email: email);
+      return true;
+    } on ApiException catch (error) {
+      _lastStatusCode = error.statusCode;
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _lastStatusCode = null;
+      _errorMessage = 'Unable to send a reset link right now.';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<bool> registerParent({
     required String fullName,
     required String email,

@@ -8,6 +8,7 @@ import 'providers/auth_provider.dart';
 import 'providers/babysitter_dashboard_provider.dart';
 import 'providers/conversations_provider.dart';
 import 'providers/parent_provider.dart';
+import 'providers/report_provider.dart';
 import 'screens/gateway_screen.dart';
 import 'screens/parent_discover.dart';
 import 'screens/sitter_dashboard.dart';
@@ -16,6 +17,7 @@ import 'services/auth_service.dart';
 import 'services/babysitter_service.dart';
 import 'services/conversation_service.dart';
 import 'services/parent_service.dart';
+import 'services/report_service.dart';
 import 'services/secure_storage_service.dart';
 import 'widgets/app_skeleton.dart';
 
@@ -35,6 +37,7 @@ final ParentService _parentService = ParentService(apiClient: _apiClient);
 final ConversationService _conversationService = ConversationService(
   apiClient: _apiClient,
 );
+final ReportService _reportService = ReportService(apiClient: _apiClient);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,6 +77,9 @@ class BabyCareApp extends StatelessWidget {
           create: (_) => BabysitterDashboardProvider(
             babysitterService: _babysitterService,
           ),
+        ),
+        ChangeNotifierProvider<ReportProvider>(
+          create: (_) => ReportProvider(reportService: _reportService),
         ),
       ],
       child: MaterialApp(

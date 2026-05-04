@@ -5,6 +5,7 @@ import '../config/theme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/conversations_provider.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/report_user_sheet.dart';
 import 'gateway_screen.dart';
 import 'sitter_messages.dart';
 
@@ -107,8 +108,12 @@ class _ParentProfileSitterViewScreenState
           conversationId: conversation.id,
           title: conversation.participantName,
           subtitle:
-              (conversation.participantOccupation ?? conversation.participantRole ?? 'Parent')
+              (conversation.participantOccupation ??
+                      conversation.participantRole ??
+                      'Parent')
                   .trim(),
+          participantId: (widget.parentId ?? conversation.participantId ?? '')
+              .trim(),
         ),
       ),
     );
@@ -122,6 +127,17 @@ class _ParentProfileSitterViewScreenState
     }
 
     AppToast.showInfo(context, 'Phone number: $phoneNumber');
+  }
+
+  Future<void> _onReportPressed() async {
+    await showReportUserSheet(
+      context,
+      reportedUserId: (widget.parentId ?? '').trim(),
+      reportedUserName: widget.parentName.trim().isEmpty
+          ? 'Parent'
+          : widget.parentName.trim(),
+      reportedUserRole: 'parent',
+    );
   }
 
   @override
@@ -188,6 +204,17 @@ class _ParentProfileSitterViewScreenState
               ),
             ),
           ),
+          Positioned(
+            right: 0,
+            child: GestureDetector(
+              onTap: _onReportPressed,
+              child: const Icon(
+                Icons.outlined_flag_rounded,
+                color: BabyCareTheme.primaryBerry,
+                size: 24,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -210,9 +237,7 @@ class _ParentProfileSitterViewScreenState
               gradient: BabyCareTheme.primaryGradient,
               border: Border.all(color: BabyCareTheme.primaryBerry, width: 4),
             ),
-            child: ClipOval(
-              child: _buildProfileImage(imageSource),
-            ),
+            child: ClipOval(child: _buildProfileImage(imageSource)),
           ),
           const SizedBox(height: 16),
           // Name

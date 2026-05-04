@@ -5,6 +5,7 @@ import '../config/theme.dart';
 import '../models/auth_user.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/app_toast.dart';
+import 'forgot_password.dart';
 import 'gateway_screen.dart';
 import 'parent_account_creation.dart';
 import 'parent_discover.dart';
@@ -78,8 +79,16 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
   }
 
   void _onForgotPasswordPressed() {
-    // TODO: Implement forgot password flow
-    AppToast.showInfo(context, 'Forgot password flow not yet implemented');
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ForgotPasswordScreen(
+          accountLabel: 'parent',
+          prefilledIdentifier: _emailController.text,
+          identifierLabel: 'Email address',
+          identifierHint: 'Enter your parent account email',
+        ),
+      ),
+    );
   }
 
   void _onCreateAccountPressed() {

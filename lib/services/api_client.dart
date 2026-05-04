@@ -228,6 +228,8 @@ class ApiClient {
     String message = 'Request failed';
     if (decoded is Map<String, dynamic>) {
       message = (decoded['error'] ?? decoded['message'] ?? message).toString();
+    } else if (decoded is String && decoded.trim().isNotEmpty) {
+      message = decoded.trim();
     }
 
     throw ApiException(
