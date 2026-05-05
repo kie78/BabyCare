@@ -12,10 +12,10 @@ import '../providers/conversations_provider.dart';
 import '../providers/parent_provider.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/app_toast.dart';
-import '../widgets/report_user_sheet.dart';
 import 'gateway_screen.dart';
 import 'parent_account.dart';
 import 'parent_discover.dart';
+import 'sitter_profile_parent_view.dart';
 
 class ParentMessagesScreen extends StatefulWidget {
   const ParentMessagesScreen({super.key});
@@ -884,26 +884,29 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
     unawaited(_loadMessages());
   }
 
-  Future<void> _onReportPressed() async {
+  Future<void> _openParticipantProfile() async {
     final conversation = context.read<ConversationsProvider>().conversationById(
       widget.conversationId,
     );
-    final reportedUserId = _firstNonEmpty([
-      widget.participantId,
+    final participantId = _firstNonEmpty([
       _participantProfile?.id,
+      widget.participantId,
       conversation?.participantId,
     ], fallback: '');
-    final reportedUserName = _firstNonEmpty([
-      _participantProfile?.fullName,
-      conversation?.participantName,
-      widget.title,
-    ], fallback: 'Babysitter');
 
-    await showReportUserSheet(
-      context,
-      reportedUserId: reportedUserId,
-      reportedUserName: reportedUserName,
-      reportedUserRole: 'babysitter',
+    if (participantId.isEmpty) {
+      AppToast.showInfo(
+        context,
+        'We could not open this babysitter profile right now.',
+      );
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            SitterProfileParentViewScreen(babysitterId: participantId),
+      ),
     );
   }
 
@@ -992,42 +995,48 @@ class _ParentChatThreadScreenState extends State<ParentChatThreadScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: BabyCareTheme.primaryGradient,
-            ),
-            child: ClipOval(child: _buildProfileImage(avatarUrl)),
-          ),
-          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleSmall!.copyWith(
-                    color: BabyCareTheme.darkGrey,
-                    fontWeight: FontWeight.bold,
+            child: GestureDetector(
+              onTap: _openParticipantProfile,
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: BabyCareTheme.primaryGradient,
+                    ),
+                    child: ClipOval(child: _buildProfileImage(avatarUrl)),
                   ),
-                ),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                    color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: Theme.of(context).textTheme.titleSmall!
+                              .copyWith(
+                                color: BabyCareTheme.darkGrey,
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                        Text(
+                          subtitle,
+                          style: Theme.of(context).textTheme.bodySmall!
+                              .copyWith(
+                                color: BabyCareTheme.darkGrey.withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: _onReportPressed,
-            child: Icon(
-              Icons.outlined_flag_rounded,
-              color: BabyCareTheme.primaryBerry,
-              size: 20,
+                ],
+              ),
             ),
           ),
         ],

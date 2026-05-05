@@ -35,6 +35,79 @@ class _ParentAccountScreenState extends State<ParentAccountScreen> {
     );
   }
 
+  Future<void> _showLogoutDialog() async {
+    var isLoggingOut = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: BabyCareTheme.universalWhite,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(BabyCareTheme.radiusMedium),
+              ),
+              title: Text(
+                'Log Out',
+                style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                  color: BabyCareTheme.primaryBerry,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: Text(
+                'Are you sure you want to log out of your account?',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall!.copyWith(color: BabyCareTheme.darkGrey),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoggingOut
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: isLoggingOut
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            isLoggingOut = true;
+                          });
+
+                          await _logout();
+                        },
+                  child: isLoggingOut
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              BabyCareTheme.primaryBerry,
+                            ),
+                          ),
+                        )
+                      : const Text(
+                          'Log Out',
+                          style: TextStyle(color: BabyCareTheme.primaryBerry),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -90,7 +163,6 @@ class _ParentAccountScreenState extends State<ParentAccountScreen> {
                         ),
 
                         const SizedBox(height: 40),
-
                         // Log Out Button
                         _buildLogOutButton(),
 
@@ -196,7 +268,7 @@ class _ParentAccountScreenState extends State<ParentAccountScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: _logout,
+          onTap: _showLogoutDialog,
           borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 14),
@@ -422,7 +494,8 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
       return;
     }
 
-    final fieldsChanged = _normalizeValue(_nameController.text) !=
+    final fieldsChanged =
+        _normalizeValue(_nameController.text) !=
             _normalizeValue(initialProfile.fullName) ||
         _normalizeValue(_occupationController.text) !=
             _normalizeValue(initialProfile.occupation) ||
@@ -455,7 +528,8 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     _occupationController.text = profile.occupation;
     _hoursController.text = profile.preferredHours;
     _phoneController.text = profile.phone ?? '';
-    _locationController.text = profile.primaryLocation ?? profile.location ?? '';
+    _locationController.text =
+        profile.primaryLocation ?? profile.location ?? '';
     _emailController.text = profile.email;
     _selectedProfileImagePath = null;
     _updateHasChanges();
@@ -474,7 +548,10 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
     final file = result.files.single;
     final path = file.path;
     if (path == null || path.trim().isEmpty) {
-      AppToast.showError(context, 'Unable to access the selected image. Try again.');
+      AppToast.showError(
+        context,
+        'Unable to access the selected image. Try again.',
+      );
       return;
     }
 
@@ -800,10 +877,7 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
               height: 120,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(
-                  color: BabyCareTheme.primaryBerry,
-                  width: 3,
-                ),
+                border: Border.all(color: BabyCareTheme.primaryBerry, width: 3),
               ),
               child: ClipOval(
                 child: localImagePath.isNotEmpty
@@ -813,7 +887,10 @@ class _ParentProfileEditScreenState extends State<ParentProfileEditScreen> {
                         remoteImageUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) {
-                          return Image.asset('assets/logo.png', fit: BoxFit.cover);
+                          return Image.asset(
+                            'assets/logo.png',
+                            fit: BoxFit.cover,
+                          );
                         },
                       )
                     : Image.asset('assets/logo.png', fit: BoxFit.cover),

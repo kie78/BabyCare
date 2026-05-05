@@ -18,7 +18,7 @@ class ReportProvider extends ChangeNotifier {
   int? get lastStatusCode => _lastStatusCode;
 
   Future<bool> submitReport({
-    required String reportedUserId,
+    String? reportedUserId,
     required String reportType,
     String? description,
   }) async {

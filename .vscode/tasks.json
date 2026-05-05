@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run BabyCare with Clerk",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"run",
+				"--dart-define=CLERK_PUBLISHABLE_KEY=pk_test_Zm9uZC1kYXNzaWUtMzIuY2xlcmsuYWNjb3VudHMuZGV2JA"
+			],
+			"isBackground": true,
+			"group": "build"
+		}
+	]
+}

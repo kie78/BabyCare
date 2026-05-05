@@ -90,13 +90,16 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     }
 
     final fieldsChanged =
-        _normalizeValue(_ratesController.text) != _formatEditableRate(initialProfile) ||
+        _normalizeValue(_ratesController.text) !=
+            _formatEditableRate(initialProfile) ||
         _normalizeValue(_locationController.text) !=
             _normalizeValue(initialProfile.location) ||
         _normalizeValue(_paymentController.text) !=
             _normalizeValue(initialProfile.paymentMethod) ||
         _serializeAvailability(_selectedDays) !=
-            _serializeAvailability(_mapAvailabilityDays(initialProfile.availability));
+            _serializeAvailability(
+              _mapAvailabilityDays(initialProfile.availability),
+            );
 
     final imageChanged = _normalizeValue(_selectedProfileImagePath).isNotEmpty;
     final nextHasChanges = fieldsChanged || imageChanged;
@@ -129,7 +132,10 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     final file = result.files.single;
     final path = file.path;
     if (path == null || path.trim().isEmpty) {
-      AppToast.showError(context, 'Unable to access the selected image. Try again.');
+      AppToast.showError(
+        context,
+        'Unable to access the selected image. Try again.',
+      );
       return;
     }
 
@@ -226,7 +232,8 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
       }
       AppToast.showError(
         context,
-        dashboardProvider.errorMessage ?? 'Unable to update your profile right now.',
+        dashboardProvider.errorMessage ??
+            'Unable to update your profile right now.',
         statusCode: dashboardProvider.lastStatusCode,
         fallbackMessage: 'Unable to update your profile right now.',
       );
@@ -238,7 +245,8 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
       context,
       hasAvatarChange
           ? 'Profile and avatar updated successfully.'
-          : (dashboardProvider.successMessage ?? 'Profile updated successfully!'),
+          : (dashboardProvider.successMessage ??
+                'Profile updated successfully!'),
     );
   }
 
@@ -282,6 +290,90 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
     _selectedDays = _mapAvailabilityDays(profile.availability);
     _selectedProfileImagePath = null;
     _updateHasChanges();
+  }
+
+  Future<void> _logout() async {
+    await context.read<AuthProvider>().logout();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const GatewayScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _showLogoutDialog() async {
+    var isLoggingOut = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: BabyCareTheme.universalWhite,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(BabyCareTheme.radiusMedium),
+              ),
+              title: Text(
+                'Logout',
+                style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                  color: BabyCareTheme.primaryBerry,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: Text(
+                'Are you sure you want to logout?',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall!.copyWith(color: BabyCareTheme.darkGrey),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoggingOut
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: BabyCareTheme.darkGrey.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: isLoggingOut
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            isLoggingOut = true;
+                          });
+
+                          await _logout();
+                        },
+                  child: isLoggingOut
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              BabyCareTheme.primaryBerry,
+                            ),
+                          ),
+                        )
+                      : const Text(
+                          'Logout',
+                          style: TextStyle(color: BabyCareTheme.primaryBerry),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   String _displayOrFallback(String? value, {required String fallback}) {
@@ -412,10 +504,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
           icon: Icons.edit_outlined,
           focusNode: _paymentFocusNode,
         ),
-        if (_hasChanges) ...[
-          const SizedBox(height: 32),
-          _buildSaveButton(),
-        ],
+        if (_hasChanges) ...[const SizedBox(height: 32), _buildSaveButton()],
         const SizedBox(height: 16),
         _buildLogoutButton(),
         const SizedBox(height: 100),
@@ -508,25 +597,15 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: const Icon(
-              Icons.arrow_back,
-              color: BabyCareTheme.primaryBerry,
-              size: 24,
-            ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Profile',
+          style: Theme.of(context).textTheme.headlineLarge!.copyWith(
+            color: BabyCareTheme.primaryBerry,
+            fontWeight: FontWeight.bold,
           ),
-          const SizedBox(width: 12),
-          Text(
-            'Profile',
-            style: Theme.of(context).textTheme.headlineLarge!.copyWith(
-              color: BabyCareTheme.primaryBerry,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -546,11 +625,12 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: BabyCareTheme.primaryGradient,
-                  border: Border.all(color: BabyCareTheme.primaryBerry, width: 3),
+                  border: Border.all(
+                    color: BabyCareTheme.primaryBerry,
+                    width: 3,
+                  ),
                 ),
-                child: ClipOval(
-                  child: _buildCurrentProfileImage(),
-                ),
+                child: ClipOval(child: _buildCurrentProfileImage()),
               ),
             ),
             // Camera Overlay
@@ -736,41 +816,40 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
                 children: List.generate(
                   _days.length,
                   (index) => GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedDays[index] = !_selectedDays[index];
-                          });
-                          _updateHasChanges();
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _selectedDays[index]
-                                ? BabyCareTheme.primaryBerry
-                                : BabyCareTheme.universalWhite,
-                            border: Border.all(
-                              color: _selectedDays[index]
-                                  ? BabyCareTheme.primaryBerry
-                                  : BabyCareTheme.lightGrey,
-                              width: 1.5,
-                            ),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            _days[index],
-                            style: Theme.of(context).textTheme.bodySmall!
-                                .copyWith(
-                                  color: _selectedDays[index]
-                                      ? BabyCareTheme.universalWhite
-                                      : BabyCareTheme.darkGrey,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                          ),
+                    onTap: () {
+                      setState(() {
+                        _selectedDays[index] = !_selectedDays[index];
+                      });
+                      _updateHasChanges();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _selectedDays[index]
+                            ? BabyCareTheme.primaryBerry
+                            : BabyCareTheme.universalWhite,
+                        border: Border.all(
+                          color: _selectedDays[index]
+                              ? BabyCareTheme.primaryBerry
+                              : BabyCareTheme.lightGrey,
+                          width: 1.5,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        _days[index],
+                        style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                          color: _selectedDays[index]
+                              ? BabyCareTheme.universalWhite
+                              : BabyCareTheme.darkGrey,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -930,54 +1009,7 @@ class _SitterAccountScreenState extends State<SitterAccountScreen> {
   /// Logout Button
   Widget _buildLogoutButton() {
     return GestureDetector(
-      onTap: () {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: BabyCareTheme.universalWhite,
-            title: Text(
-              'Logout',
-              style: Theme.of(context).textTheme.titleMedium!.copyWith(
-                color: BabyCareTheme.primaryBerry,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            content: Text(
-              'Are you sure you want to logout?',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall!.copyWith(color: BabyCareTheme.darkGrey),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(color: BabyCareTheme.darkGrey),
-                ),
-              ),
-              TextButton(
-                onPressed: () async {
-                  await context.read<AuthProvider>().logout();
-                  if (!context.mounted) {
-                    return;
-                  }
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (context) => const GatewayScreen(),
-                    ),
-                    (route) => false,
-                  );
-                },
-                child: const Text(
-                  'Logout',
-                  style: TextStyle(color: BabyCareTheme.primaryBerry),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      onTap: _showLogoutDialog,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 16),

@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "BabyCare",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "--dart-define=CLERK_PUBLISHABLE_KEY=pk_test_Zm9uZC1kYXNzaWUtMzIuY2xlcmsuYWNjb3VudHMuZGV2JA"
+      ]
+    }
+  ]
+}

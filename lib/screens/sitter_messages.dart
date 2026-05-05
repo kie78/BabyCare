@@ -13,8 +13,8 @@ import '../providers/babysitter_dashboard_provider.dart';
 import '../providers/conversations_provider.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/app_toast.dart';
-import '../widgets/report_user_sheet.dart';
 import 'gateway_screen.dart';
+import 'parent_profile_sitter_view.dart';
 import 'sitter_account.dart';
 import 'sitter_dashboard.dart';
 
@@ -734,20 +734,46 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
     unawaited(_loadMessages());
   }
 
-  Future<void> _onReportPressed() async {
+  Future<void> _openParticipantProfile() async {
     final conversation = context.read<ConversationsProvider>().conversationById(
       widget.conversationId,
     );
-    final reportedUserId =
-        (widget.participantId ?? conversation?.participantId ?? '').trim();
-    final reportedUserName = (conversation?.participantName ?? widget.title)
-        .trim();
+    final participantId =
+        (widget.participantId ??
+                conversation?.participantId ??
+                _participantProfile?.id ??
+                '')
+            .trim();
+    final participantName =
+        (_participantProfile?.fullName ??
+                conversation?.participantName ??
+                widget.title)
+            .trim();
+    final participantRole =
+        (_participantProfile?.occupation ??
+                conversation?.participantOccupation ??
+                widget.subtitle)
+            .trim();
+    final participantLocation =
+        (_participantProfile?.primaryLocation ?? _participantProfile?.location)
+            ?.trim() ??
+        '';
+    final participantHours = (_participantProfile?.preferredHours ?? '').trim();
+    final participantPhone = (conversation?.participantPhone ?? '').trim();
+    final avatarUrl = (_participantProfile?.profilePictureUrl ?? '').trim();
 
-    await showReportUserSheet(
-      context,
-      reportedUserId: reportedUserId,
-      reportedUserName: reportedUserName.isEmpty ? 'Parent' : reportedUserName,
-      reportedUserRole: 'parent',
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ParentProfileSitterViewScreen(
+          parentId: participantId,
+          parentName: participantName.isEmpty ? 'Parent' : participantName,
+          profileImage: avatarUrl,
+          location: participantLocation,
+          job: participantRole.isEmpty ? 'Parent' : participantRole,
+          hours: participantHours,
+          phoneNumber: participantPhone,
+        ),
+      ),
     );
   }
 
@@ -820,42 +846,48 @@ class _SitterChatThreadScreenState extends State<SitterChatThreadScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: BabyCareTheme.primaryGradient,
-            ),
-            child: ClipOval(child: _buildProfileImage(avatarUrl)),
-          ),
-          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.title,
-                  style: Theme.of(context).textTheme.titleSmall!.copyWith(
-                    color: BabyCareTheme.darkGrey,
-                    fontWeight: FontWeight.bold,
+            child: GestureDetector(
+              onTap: _openParticipantProfile,
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: BabyCareTheme.primaryGradient,
+                    ),
+                    child: ClipOval(child: _buildProfileImage(avatarUrl)),
                   ),
-                ),
-                Text(
-                  widget.subtitle,
-                  style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                    color: BabyCareTheme.darkGrey.withValues(alpha: 0.6),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: Theme.of(context).textTheme.titleSmall!
+                              .copyWith(
+                                color: BabyCareTheme.darkGrey,
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                        Text(
+                          widget.subtitle,
+                          style: Theme.of(context).textTheme.bodySmall!
+                              .copyWith(
+                                color: BabyCareTheme.darkGrey.withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: _onReportPressed,
-            child: const Icon(
-              Icons.outlined_flag_rounded,
-              color: BabyCareTheme.primaryBerry,
-              size: 20,
+                ],
+              ),
             ),
           ),
         ],

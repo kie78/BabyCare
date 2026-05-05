@@ -6,15 +6,18 @@ class ReportService {
   final ApiClient _apiClient;
 
   Future<void> submitReport({
-    required String reportedUserId,
+    String? reportedUserId,
     required String reportType,
     String? description,
   }) async {
+    final normalizedReportedUserId = (reportedUserId ?? '').trim();
+
     final response = await _apiClient.post(
       '/api/v1/reports',
       body: {
-        'reported_user_id': reportedUserId.trim(),
         'report_type': reportType.trim(),
+        if (normalizedReportedUserId.isNotEmpty)
+          'reported_user_id': normalizedReportedUserId,
         if ((description ?? '').trim().isNotEmpty)
           'description': description!.trim(),
       },

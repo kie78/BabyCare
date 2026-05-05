@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config/theme.dart';
+import '../models/auth_user.dart';
 import '../providers/auth_provider.dart';
+import '../services/clerk_password_reset_service.dart';
 import '../widgets/app_toast.dart';
+import 'parent_discover.dart';
+import 'sitter_dashboard.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({
@@ -25,10 +29,13 @@ class ForgotPasswordScreen extends StatefulWidget {
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   late final TextEditingController _identifierController;
+  late final ClerkPasswordResetService _passwordResetService;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
+    _passwordResetService = ClerkPasswordResetService();
     _identifierController = TextEditingController(
       text: widget.prefilledIdentifier?.trim() ?? '',
     );
@@ -37,10 +44,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   void dispose() {
     _identifierController.dispose();
+    _passwordResetService.dispose();
     super.dispose();
   }
 
-  Future<void> _requestResetLink({bool showSuccessToast = false}) async {
+  Future<void> _requestResetCode({bool showSuccessToast = false}) async {
     final identifier = _identifierController.text.trim();
     if (identifier.isEmpty) {
       AppToast.showInfo(context, 'Enter the email for your account.');
@@ -52,46 +60,51 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       return;
     }
 
-    final authProvider = context.read<AuthProvider>();
-    final success = await authProvider.forgotPassword(email: identifier);
-    if (!mounted) {
-      return;
-    }
+    setState(() {
+      _isSubmitting = true;
+    });
 
-    if (!success) {
+    try {
+      await _passwordResetService.initiateEmailPasswordReset(identifier);
+      if (!mounted) {
+        return;
+      }
+
+      if (showSuccessToast) {
+        AppToast.showSuccess(context, 'Another reset code has been sent.');
+      }
+
+      await _showResetCodeScreen(identifier);
+    } on ClerkPasswordResetException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
       AppToast.showError(
         context,
-        authProvider.errorMessage ?? 'Unable to send a reset link right now.',
-        statusCode: authProvider.lastStatusCode,
-        fallbackMessage: 'Unable to send a reset link right now.',
+        error.message,
+        fallbackMessage: 'Unable to start password reset right now.',
       );
-      return;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
-
-    if (showSuccessToast) {
-      AppToast.showSuccess(
-        context,
-        'Another reset email request has been sent.',
-      );
-    }
-
-    await _showResetEmailSentScreen(identifier);
   }
 
   Future<void> _onContinuePressed() {
-    return _requestResetLink();
+    return _requestResetCode();
   }
 
-  Future<void> _onIResetMyPasswordPressed() async {
-    Navigator.of(context).pop(_identifierController.text.trim());
-  }
-
-  Future<void> _showResetEmailSentScreen(String email) async {
-    final action = await Navigator.of(context).push<_ResetEmailSentAction>(
+  Future<void> _showResetCodeScreen(String email) async {
+    final resetEmail = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (context) => _ResetEmailSentScreen(
+        builder: (context) => _ResetPasswordCodeScreen(
           accountLabel: widget.accountLabel,
           email: email,
+          passwordResetService: _passwordResetService,
         ),
       ),
     );
@@ -100,13 +113,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       return;
     }
 
-    if (action == _ResetEmailSentAction.loginWithNewPassword) {
-      await _onIResetMyPasswordPressed();
-      return;
-    }
-
-    if (action == _ResetEmailSentAction.backToLogin) {
-      Navigator.of(context).pop();
+    if (resetEmail != null && resetEmail.isNotEmpty) {
+      Navigator.of(context).pop(resetEmail);
     }
   }
 
@@ -126,8 +134,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isSubmitting = context.watch<AuthProvider>().isLoading;
-
     return Scaffold(
       backgroundColor: BabyCareTheme.universalWhite,
       body: SafeArea(
@@ -149,7 +155,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               const SizedBox(height: 28),
               _buildHeader(context),
               const SizedBox(height: 32),
-              _buildRequestState(context, isSubmitting),
+              _buildRequestState(context, _isSubmitting),
             ],
           ),
         ),
@@ -225,7 +231,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                'If an account with that email exists, we will send a password reset link to the inbox. The reset page is handled outside the app.',
+                'We will send a Clerk reset code to the email address, then you can enter the code and choose a new password here in the app.',
                 style: Theme.of(context).textTheme.bodyMedium!.copyWith(
                   color: BabyCareTheme.darkGrey,
                   height: 1.6,
@@ -260,7 +266,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         const SizedBox(height: 24),
         _buildPrimaryButton(
           context,
-          label: 'Send Reset Link',
+          label: 'Send Reset Code',
           onPressed: _onContinuePressed,
           isLoading: isSubmitting,
         ),
@@ -323,45 +329,218 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 }
 
-enum _ResetEmailSentAction { backToLogin, loginWithNewPassword }
-
-class _ResetEmailSentScreen extends StatelessWidget {
-  const _ResetEmailSentScreen({
+class _ResetPasswordCodeScreen extends StatefulWidget {
+  const _ResetPasswordCodeScreen({
     required this.accountLabel,
     required this.email,
+    required this.passwordResetService,
   });
 
   final String accountLabel;
   final String email;
+  final ClerkPasswordResetService passwordResetService;
 
-  Future<void> _onResendPressed(BuildContext context) async {
-    final authProvider = context.read<AuthProvider>();
-    final success = await authProvider.forgotPassword(email: email);
-    if (!context.mounted) {
+  @override
+  State<_ResetPasswordCodeScreen> createState() =>
+      _ResetPasswordCodeScreenState();
+}
+
+class _ResetPasswordCodeScreenState extends State<_ResetPasswordCodeScreen> {
+  late final TextEditingController _codeController;
+  late final TextEditingController _passwordController;
+  late final TextEditingController _confirmPasswordController;
+
+  bool _isSubmitting = false;
+  bool _isResending = false;
+  bool _hidePassword = true;
+  bool _hideConfirmation = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _codeController = TextEditingController();
+    _passwordController = TextEditingController();
+    _confirmPasswordController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _onResendPressed() async {
+    setState(() {
+      _isResending = true;
+    });
+
+    try {
+      await widget.passwordResetService.resendEmailPasswordReset(widget.email);
+      if (!mounted) {
+        return;
+      }
+
+      AppToast.showSuccess(context, 'Another reset code has been sent.');
+    } on ClerkPasswordResetException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      AppToast.showError(
+        context,
+        error.message,
+        fallbackMessage: 'Unable to send another reset code right now.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResending = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _onResetPressed() async {
+    final code = _codeController.text.trim();
+    final password = _passwordController.text;
+    final confirmation = _confirmPasswordController.text;
+
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      AppToast.showInfo(context, 'Enter the 6-digit reset code.');
       return;
     }
 
-    if (!success) {
-      AppToast.showError(
+    if (password.length < 8) {
+      AppToast.showInfo(
         context,
-        authProvider.errorMessage ?? 'Unable to send a reset link right now.',
-        statusCode: authProvider.lastStatusCode,
-        fallbackMessage: 'Unable to send a reset link right now.',
+        'Choose a password with at least 8 characters.',
       );
       return;
     }
 
-    AppToast.showSuccess(context, 'Another reset email request has been sent.');
+    if (password != confirmation) {
+      AppToast.showInfo(context, 'Passwords do not match.');
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    try {
+      await widget.passwordResetService.completeEmailPasswordReset(
+        email: widget.email,
+        code: code,
+        newPassword: password,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final authProvider = context.read<AuthProvider>();
+      final success = await authProvider.login(
+        email: widget.email,
+        password: password,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      if (!success) {
+        AppToast.showError(
+          context,
+          authProvider.errorMessage ??
+              'Password reset worked, but sign in failed.',
+          statusCode: authProvider.lastStatusCode,
+          fallbackMessage: 'Password reset worked, but sign in failed.',
+          normalizeUnauthorized: false,
+        );
+        return;
+      }
+
+      final expectedRole = _expectedRole;
+      if (expectedRole != null && authProvider.currentRole != expectedRole) {
+        await authProvider.logout();
+        if (!mounted) {
+          return;
+        }
+
+        AppToast.showError(context, _roleMismatchMessage(expectedRole));
+        return;
+      }
+
+      AppToast.showSuccess(
+        context,
+        'Password reset complete. You are signed in.',
+      );
+      _navigateAfterSuccessfulReset(authProvider.currentRole);
+    } on ClerkPasswordResetException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      AppToast.showError(
+        context,
+        error.message,
+        fallbackMessage: 'Unable to complete password reset right now.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
   }
 
-  Future<void> _onIResetMyPasswordPressed(BuildContext context) async {
-    Navigator.of(context).pop(_ResetEmailSentAction.loginWithNewPassword);
+  UserRole? get _expectedRole {
+    switch (widget.accountLabel.trim().toLowerCase()) {
+      case 'parent':
+        return UserRole.parent;
+      case 'babysitter':
+      case 'sitter':
+        return UserRole.babysitter;
+      default:
+        return null;
+    }
+  }
+
+  String _roleMismatchMessage(UserRole expectedRole) {
+    switch (expectedRole) {
+      case UserRole.parent:
+        return 'This account does not have parent access.';
+      case UserRole.babysitter:
+        return 'This account does not have babysitter access.';
+      default:
+        return 'This account does not have access to this app area.';
+    }
+  }
+
+  void _navigateAfterSuccessfulReset(UserRole role) {
+    switch (role) {
+      case UserRole.parent:
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const ParentDiscoverScreen()),
+          (route) => false,
+        );
+        return;
+      case UserRole.babysitter:
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) => const SitterDashboardScreen(),
+          ),
+          (route) => false,
+        );
+        return;
+      default:
+        Navigator.of(context).pop(widget.email);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isSubmitting = context.watch<AuthProvider>().isLoading;
-
     return Scaffold(
       backgroundColor: BabyCareTheme.universalWhite,
       body: SafeArea(
@@ -403,7 +582,7 @@ class _ResetEmailSentScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Text(
-                'Reset Email Sent',
+                'Enter Reset Code',
                 style: Theme.of(context).textTheme.headlineMedium!.copyWith(
                   color: BabyCareTheme.primaryBerry,
                   fontWeight: FontWeight.bold,
@@ -411,7 +590,7 @@ class _ResetEmailSentScreen extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'If an account with $email exists, BabyCare has asked the backend to send a Clerk reset email for your $accountLabel account.',
+                'Enter the reset code sent to ${widget.email} to continue with your ${widget.accountLabel} account recovery.',
                 style: Theme.of(context).textTheme.bodyMedium!.copyWith(
                   color: BabyCareTheme.darkGrey,
                   height: 1.6,
@@ -423,7 +602,9 @@ class _ResetEmailSentScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
                   color: BabyCareTheme.universalWhite,
-                  borderRadius: BorderRadius.circular(BabyCareTheme.radiusMedium),
+                  borderRadius: BorderRadius.circular(
+                    BabyCareTheme.radiusMedium,
+                  ),
                   border: Border.all(color: BabyCareTheme.lightPink),
                   boxShadow: const [
                     BoxShadow(
@@ -451,15 +632,16 @@ class _ResetEmailSentScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 18),
                     Text(
-                      'Check your inbox',
-                      style: Theme.of(context).textTheme.headlineSmall!.copyWith(
-                        color: BabyCareTheme.primaryBerry,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      'Choose your new password',
+                      style: Theme.of(context).textTheme.headlineSmall!
+                          .copyWith(
+                            color: BabyCareTheme.primaryBerry,
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'For security, BabyCare always shows the same confirmation message and does not reveal whether the email is registered.',
+                      'Enter the 6-digit reset code, then set the password you want to use the next time you sign in.',
                       style: Theme.of(context).textTheme.bodyMedium!.copyWith(
                         color: BabyCareTheme.darkGrey,
                         height: 1.6,
@@ -480,27 +662,94 @@ class _ResetEmailSentScreen extends StatelessWidget {
                         children: [
                           Text(
                             'Next steps',
-                            style: Theme.of(context).textTheme.titleMedium!.copyWith(
-                              color: BabyCareTheme.primaryBerry,
-                              fontWeight: FontWeight.w700,
-                            ),
+                            style: Theme.of(context).textTheme.titleMedium!
+                                .copyWith(
+                                  color: BabyCareTheme.primaryBerry,
+                                  fontWeight: FontWeight.w700,
+                                ),
                           ),
                           const SizedBox(height: 10),
                           _StepRow(
                             number: '1',
-                            label: 'Open the reset email from Clerk in your inbox.',
+                            label:
+                                'Open the reset email and copy the reset code.',
                           ),
                           const SizedBox(height: 10),
                           _StepRow(
                             number: '2',
-                            label: 'Choose a new password from the secure reset page.',
+                            label:
+                                'Enter the code below and choose a new password.',
                           ),
                           const SizedBox(height: 10),
                           _StepRow(
                             number: '3',
-                            label: 'Return to BabyCare and sign in with the new password.',
+                            label:
+                                'BabyCare signs you in automatically after the reset succeeds.',
                           ),
                         ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    TextField(
+                      controller: _codeController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'Reset code',
+                        prefixIcon: Icon(
+                          Icons.password_rounded,
+                          color: BabyCareTheme.primaryBerry,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: _hidePassword,
+                      decoration: InputDecoration(
+                        labelText: 'New password',
+                        prefixIcon: const Icon(
+                          Icons.lock_outline_rounded,
+                          color: BabyCareTheme.primaryBerry,
+                        ),
+                        suffixIcon: IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _hidePassword = !_hidePassword;
+                            });
+                          },
+                          icon: Icon(
+                            _hidePassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: BabyCareTheme.primaryBerry,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _confirmPasswordController,
+                      obscureText: _hideConfirmation,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm new password',
+                        prefixIcon: const Icon(
+                          Icons.lock_reset_rounded,
+                          color: BabyCareTheme.primaryBerry,
+                        ),
+                        suffixIcon: IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _hideConfirmation = !_hideConfirmation;
+                            });
+                          },
+                          icon: Icon(
+                            _hideConfirmation
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: BabyCareTheme.primaryBerry,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -508,20 +757,23 @@ class _ResetEmailSentScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               _PrimaryActionButton(
-                label: 'I Reset My Password',
-                onPressed: () => _onIResetMyPasswordPressed(context),
+                label: 'Reset Password',
+                onPressed: _onResetPressed,
+                isLoading: _isSubmitting,
               ),
               const SizedBox(height: 12),
               OutlinedButton(
-                onPressed: isSubmitting ? null : () => _onResendPressed(context),
+                onPressed: _isResending ? null : _onResendPressed,
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size.fromHeight(54),
                   side: const BorderSide(color: BabyCareTheme.primaryBerry),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
+                    borderRadius: BorderRadius.circular(
+                      BabyCareTheme.radiusLarge,
+                    ),
                   ),
                 ),
-                child: isSubmitting
+                child: _isResending
                     ? const SizedBox(
                         width: 22,
                         height: 22,
@@ -533,18 +785,19 @@ class _ResetEmailSentScreen extends StatelessWidget {
                         ),
                       )
                     : Text(
-                        'Send Another Link',
-                        style: Theme.of(context).textTheme.titleMedium!.copyWith(
-                          color: BabyCareTheme.primaryBerry,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        'Send Another Code',
+                        style: Theme.of(context).textTheme.titleMedium!
+                            .copyWith(
+                              color: BabyCareTheme.primaryBerry,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
               ),
               const SizedBox(height: 12),
               Center(
                 child: TextButton(
                   onPressed: () {
-                    Navigator.of(context).pop(_ResetEmailSentAction.backToLogin);
+                    Navigator.of(context).pop();
                   },
                   child: Text(
                     'Back to Login',
@@ -609,10 +862,12 @@ class _PrimaryActionButton extends StatelessWidget {
   const _PrimaryActionButton({
     required this.label,
     required this.onPressed,
+    this.isLoading = false,
   });
 
   final String label;
   final Future<void> Function() onPressed;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -623,19 +878,30 @@ class _PrimaryActionButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(BabyCareTheme.radiusLarge),
       ),
       child: ElevatedButton(
-        onPressed: onPressed,
+        onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.titleMedium!.copyWith(
-            color: BabyCareTheme.universalWhite,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    BabyCareTheme.universalWhite,
+                  ),
+                ),
+              )
+            : Text(
+                label,
+                style: Theme.of(context).textTheme.titleMedium!.copyWith(
+                  color: BabyCareTheme.universalWhite,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
       ),
     );
   }
