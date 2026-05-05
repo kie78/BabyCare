@@ -221,6 +221,7 @@ class _SitterProfileParentViewScreenState
               if (sitter != null)
                 Positioned(
                   left: 24,
+                  right: 24,
                   bottom: 24,
                   child: _buildMessageButton(sitter),
                 ),

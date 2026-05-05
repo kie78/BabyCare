@@ -109,8 +109,8 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
     );
   }
 
-  void _onForgotPasswordPressed() {
-    Navigator.of(context).push(
+  Future<void> _onForgotPasswordPressed() async {
+    final resetEmail = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (context) => ForgotPasswordScreen(
           accountLabel: 'babysitter',
@@ -119,6 +119,16 @@ class _SitterLoginScreenState extends State<SitterLoginScreen> {
           identifierHint: 'Enter your babysitter account email',
         ),
       ),
+    );
+
+    if (!mounted || resetEmail == null || resetEmail.isEmpty) {
+      return;
+    }
+
+    _emailController.text = resetEmail;
+    AppToast.showSuccess(
+      context,
+      'Password reset completed? Sign in with your new password.',
     );
   }
 

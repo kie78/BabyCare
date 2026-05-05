@@ -39,7 +39,7 @@ class _ParentProfileSitterViewScreenState
   bool _isOpeningChat = false;
 
   Future<void> _handleUnauthorized(int? statusCode) async {
-    if (statusCode != 401 && statusCode != 403) {
+    if (statusCode != 401) {
       return;
     }
 
@@ -72,6 +72,22 @@ class _ParentProfileSitterViewScreenState
 
     await _handleUnauthorized(conversationsProvider.lastStatusCode);
     if (!mounted) {
+      return;
+    }
+
+    if (conversationsProvider.lastStatusCode == 403) {
+      AppToast.showError(
+        context,
+        conversationsProvider.errorMessage ??
+            'You do not have permission to open this conversation right now.',
+        statusCode: conversationsProvider.lastStatusCode,
+        fallbackMessage:
+            'You do not have permission to open this conversation right now.',
+        normalizeUnauthorized: false,
+      );
+      setState(() {
+        _isOpeningChat = false;
+      });
       return;
     }
 

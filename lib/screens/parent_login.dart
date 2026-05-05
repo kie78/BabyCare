@@ -78,8 +78,8 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
     );
   }
 
-  void _onForgotPasswordPressed() {
-    Navigator.of(context).push(
+  Future<void> _onForgotPasswordPressed() async {
+    final resetEmail = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (context) => ForgotPasswordScreen(
           accountLabel: 'parent',
@@ -88,6 +88,16 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
           identifierHint: 'Enter your parent account email',
         ),
       ),
+    );
+
+    if (!mounted || resetEmail == null || resetEmail.isEmpty) {
+      return;
+    }
+
+    _emailController.text = resetEmail;
+    AppToast.showSuccess(
+      context,
+      'Password reset completed? Sign in with your new password.',
     );
   }
 
